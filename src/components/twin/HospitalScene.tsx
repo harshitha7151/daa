@@ -813,7 +813,6 @@ function TransmissionEffects() {
   );
 }
 
-/** Dynamic Camera Controller with smooth LERP focus transitions */
 function CameraController() {
   const { camera } = useThree();
   const stateControls = useThree((state) => state.controls) as any;
@@ -822,42 +821,43 @@ function CameraController() {
   const selectedRoomId = useSimulationStore((s) => s.selectedRoomId);
   const people = useSimulationStore((s) => s.people);
 
-  const targetPos = useRef(new THREE.Vector3(0, 42, 58));
+  const scale = 1.75;
+  const targetPos = useRef(new THREE.Vector3(0, 54, 72));
   const targetLookAt = useRef(new THREE.Vector3(0, 3, -10));
 
   useFrame(() => {
     if (!stateControls) return;
 
     if (cameraMode === 'top') {
-      targetPos.current.set(0, 75, -10);
-      targetLookAt.current.set(0, 0, -11);
+      targetPos.current.set(0, 95, -15);
+      targetLookAt.current.set(0, 0, -16);
     } else if (cameraMode === 'ground') {
-      targetPos.current.set(0, 18, 52);
-      targetLookAt.current.set(0, 1, -10);
+      targetPos.current.set(0, 24, 66);
+      targetLookAt.current.set(0, 1.5, -10);
     } else if (cameraMode === 'first') {
-      targetPos.current.set(0, 24, 52);
-      targetLookAt.current.set(0, 7, -10);
+      targetPos.current.set(0, 34, 66);
+      targetLookAt.current.set(0, 8, -10);
     } else if (cameraMode === 'icu') {
       const p = getRoomPosition('icu');
-      targetPos.current.set(p[0], p[1] + 12, p[2] + 18);
-      targetLookAt.current.set(p[0], p[1], p[2]);
+      targetPos.current.set(p[0] * scale, (p[1] + 12) * scale, (p[2] + 18) * scale);
+      targetLookAt.current.set(p[0] * scale, p[1] * scale, p[2] * scale);
     } else if (cameraMode === 'patientZero') {
       const pz = people.find((p) => p.isPatientZero);
       if (pz) {
-        targetPos.current.set(pz.position[0], pz.position[1] + 8, pz.position[2] + 12);
-        targetLookAt.current.set(pz.position[0], pz.position[1], pz.position[2]);
+        targetPos.current.set(pz.position[0] * scale, (pz.position[1] + 8) * scale, (pz.position[2] + 12) * scale);
+        targetLookAt.current.set(pz.position[0] * scale, pz.position[1] * scale, pz.position[2] * scale);
       }
     } else if (cameraMode === 'follow') {
       const followed = people.find((p) => p.id === followedPersonId);
       if (followed) {
-        targetPos.current.set(followed.position[0], followed.position[1] + 8, followed.position[2] + 12);
-        targetLookAt.current.set(followed.position[0], followed.position[1], followed.position[2]);
+        targetPos.current.set(followed.position[0] * scale, (followed.position[1] + 8) * scale, (followed.position[2] + 12) * scale);
+        targetLookAt.current.set(followed.position[0] * scale, followed.position[1] * scale, followed.position[2] * scale);
       }
     } else if (cameraMode === 'free') {
       if (selectedRoomId) {
         const p = getRoomPosition(selectedRoomId);
-        targetPos.current.set(p[0], p[1] + 12, p[2] + 18);
-        targetLookAt.current.set(p[0], p[1], p[2]);
+        targetPos.current.set(p[0] * scale, (p[1] + 12) * scale, (p[2] + 18) * scale);
+        targetLookAt.current.set(p[0] * scale, p[1] * scale, p[2] * scale);
       } else {
         // Orbit freely, don't LERP
         return;
@@ -904,11 +904,11 @@ function SceneContent() {
   }, [people]);
 
   return (
-    <>
-      <ambientLight intensity={0.55} />
-      <directionalLight position={[40, 50, 30]} intensity={1.4} castShadow shadow-mapSize={[2048, 2048]} />
-      <directionalLight position={[-30, 40, -20]} intensity={0.35} color="#38bdf8" />
-      <hemisphereLight args={['#38bdf8', '#090d16', 0.3]} />
+    <group scale={1.75}>
+      <ambientLight intensity={0.65} />
+      <directionalLight position={[40, 50, 30]} intensity={1.5} castShadow shadow-mapSize={[2048, 2048]} />
+      <directionalLight position={[-30, 40, -20]} intensity={0.45} color="#38bdf8" />
+      <hemisphereLight args={['#38bdf8', '#090d16', 0.35]} />
 
       <HospitalInfrastructure />
 
@@ -967,7 +967,7 @@ function SceneContent() {
           selectRoom(null);
         }}
       />
-    </>
+    </group>
   );
 }
 
@@ -1070,9 +1070,9 @@ export default function HospitalScene() {
   return (
     <div className="w-full h-full relative">
       <CameraControlsOverlay />
-      <Canvas shadows camera={{ position: [0, 42, 58], fov: 42 }} className="w-full h-full bg-slate-950">
+      <Canvas shadows camera={{ position: [0, 54, 72], fov: 40 }} className="w-full h-full bg-slate-950">
         <color attach="background" args={['#090d16']} />
-        <fog attach="fog" args={['#090d16', 75, 150]} />
+        <fog attach="fog" args={['#090d16', 95, 180]} />
         <SceneContent />
       </Canvas>
     </div>
