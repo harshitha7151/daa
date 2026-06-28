@@ -202,12 +202,12 @@ export function formatSimTime(minutes: number): string {
 }
 
 export function riskColor(level: string, contamination: number): string {
-  if (level === 'locked') return '#7c3aed';
-  if (contamination >= 0.75) return '#dc2626';
-  if (contamination >= 0.5) return '#ea580c';
-  if (contamination >= 0.3) return '#ca8a04';
-  if (contamination >= 0.1) return '#84cc16';
-  return '#22c55e';
+  if (level === 'locked') return '#7c3aed'; // Purple
+  if (contamination >= 0.85) return '#8b5cf6'; // Purple
+  if (contamination >= 0.6) return '#dc2626';  // Red
+  if (contamination >= 0.35) return '#ea580c'; // Orange
+  if (contamination >= 0.15) return '#eab308'; // Yellow
+  return '#10b981'; // Green
 }
 
 import type { HealthStatus } from '../types';

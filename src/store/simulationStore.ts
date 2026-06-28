@@ -83,6 +83,14 @@ interface SimStore {
   outbreakReport: OutbreakReport | null;
   activeFloor: 'all' | 'ground' | 'first';
   mergeSortAnimStep: number;
+  
+  // Camera and UI focus states
+  cameraMode: 'free' | 'top' | 'ground' | 'first' | 'icu' | 'patientZero' | 'follow';
+  followedPersonId: string | null;
+  setCameraMode: (mode: 'free' | 'top' | 'ground' | 'first' | 'icu' | 'patientZero' | 'follow', personId?: string | null) => void;
+  algorithmSteps: Record<string, number>;
+  setAlgorithmStep: (algo: string, step: number) => void;
+  hasFocusedIcu: boolean;
 
   populateHospital: () => void;
   setConfig: (partial: Partial<SimulationConfig>) => void;
@@ -138,6 +146,14 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
   outbreakReport: null,
   activeFloor: 'all',
   mergeSortAnimStep: 0,
+
+  // Camera & Stepping Initial States
+  cameraMode: 'free',
+  followedPersonId: null,
+  setCameraMode: (mode, personId = null) => set({ cameraMode: mode, followedPersonId: personId }),
+  algorithmSteps: { bfs: 0, dijkstra: 0, floydWarshall: 0, heap: 0, mergeSort: 0, knapsack: 0 },
+  setAlgorithmStep: (algo, step) => set((s) => ({ algorithmSteps: { ...s.algorithmSteps, [algo]: step } })),
+  hasFocusedIcu: false,
 
   populateHospital: () => {
     const { config } = get();
@@ -197,6 +213,8 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
       config: { ...s.config, patientZeroId: id },
       people: s.people.map((p) => ({ ...p, isPatientZero: p.id === id })),
       logs: addLog(s.logs, s.minute, `Patient Zero selected: ${id}`, 'warning'),
+      cameraMode: 'patientZero',
+      followedPersonId: id,
     }));
   },
 
@@ -222,6 +240,9 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
       logs: addLog(addLog(logs, 0, `${disease.shortName} outbreak initiated — Patient Zero: ${config.patientZeroId}.`, 'danger'), 0, 'BFS predicts next infection wave from origin room.', 'algorithm'),
       timeline: addTimeline([], 0, `${disease.shortName} detected — Patient ${config.patientZeroId} in ${ROOM_DEFINITIONS[origin].name}`),
       snapshots: [],
+      cameraMode: 'patientZero',
+      followedPersonId: config.patientZeroId,
+      hasFocusedIcu: false,
     });
   },
 
@@ -250,6 +271,10 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
       selectedPersonId: null,
       showReport: false,
       outbreakReport: null,
+      cameraMode: 'free',
+      followedPersonId: null,
+      algorithmSteps: { bfs: 0, dijkstra: 0, floydWarshall: 0, heap: 0, mergeSort: 0, knapsack: 0 },
+      hasFocusedIcu: false,
     });
     get().populateHospital();
   },
@@ -300,6 +325,15 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
     if (recovery >= 85 && infectedCount <= 1 && minInt > 60) status = 'contained';
     if (minInt >= 1440) status = 'ended';
 
+    let cameraMode = state.cameraMode;
+    let hasFocusedIcu = state.hasFocusedIcu;
+
+    if (rooms.icu.contamination > 0.3 && !hasFocusedIcu) {
+      hasFocusedIcu = true;
+      cameraMode = 'icu';
+      logs = addLog(logs, minInt, `WARNING: ICU contamination increased. Camera auto-focused on ICU.`, 'warning');
+    }
+
     if (minInt > Math.floor(state.minute) && minInt % 5 === 0 && daa.bfs.nextPredicted) {
       const rn = ROOM_DEFINITIONS[daa.bfs.nextPredicted].name;
       logs = addLog(logs, minInt, `BFS predicts ${rn} at risk.`, 'algorithm');
@@ -315,6 +349,7 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
     }
     if (status === 'contained' && state.status === 'running') {
       timeline = addTimeline(timeline, minInt, 'Outbreak contained — hospital recovery increasing');
+      cameraMode = 'top';
     }
 
     const snapshot: SimulationSnapshot = {
@@ -379,6 +414,8 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
       recoveryTrend: recovery > computeRecovery(state.rooms, state.people) ? 'increasing' : 'stable',
       status,
       mergeSortAnimStep: (state.mergeSortAnimStep + 1) % Math.max(1, daa.mergeSort.steps.length),
+      cameraMode,
+      hasFocusedIcu,
     });
   },
 
@@ -430,6 +467,8 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
       interventions: [...interventions, `Sanitized ${ROOM_DEFINITIONS[roomId].name}`],
       logs: addLog(logs, minute, `Cleaning completed in ${ROOM_DEFINITIONS[roomId].name}.`, 'success'),
       timeline: addTimeline(get().timeline, minute, `${ROOM_DEFINITIONS[roomId].name} sanitized — risk decreased`),
+      cameraMode: 'free',
+      selectedRoomId: roomId,
     });
     get().recalculateAll();
   },

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import TopBar from './components/layout/TopBar';
 import HospitalScene, { TwinExplanationOverlay } from './components/twin/HospitalScene';
 import DaaConsole from './components/analytics/DaaConsole';
@@ -34,6 +34,7 @@ function SimulationLoop() {
 export default function App() {
   const populateHospital = useSimulationStore((s) => s.populateHospital);
   const initialized = useRef(false);
+  const [activeTab, setActiveTab] = useState<'twin' | 'daa'>('twin');
 
   useEffect(() => {
     if (!initialized.current) {
@@ -46,54 +47,85 @@ export default function App() {
     <div className="h-full flex flex-col bg-slate-950 text-white overflow-hidden">
       <TopBar />
 
-      {/* Main focus: Digital Twin 65% | DAA 35% */}
-      <div className="flex-1 flex min-h-0 overflow-hidden">
-        {/* Left Panel */}
-        <div className="w-[65%] relative min-h-0 border-r border-slate-700/50 flex flex-col">
-          {/* Hospital 3D */}
-          <div className="flex-1 min-h-0 relative">
-            <HospitalScene />
-            <TwinExplanationOverlay />
-            <RoomInfoPanel />
-            <PersonInfoPanel />
-            <div className="absolute top-2 right-2 z-10 max-w-xs">
-              <HospitalControls />
+      {/* Tabs Menu */}
+      <div className="flex bg-slate-900 border-b border-slate-800 px-4 py-1.5 gap-2 shrink-0">
+        <button
+          className={`px-4 py-1 text-xs font-semibold rounded-md transition-all duration-200 ${
+            activeTab === 'twin'
+              ? 'bg-cyan-600 text-white shadow-md shadow-cyan-900/30'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800'
+          }`}
+          onClick={() => setActiveTab('twin')}
+        >
+          SMART DIGITAL TWIN
+        </button>
+        <button
+          className={`px-4 py-1 text-xs font-semibold rounded-md transition-all duration-200 ${
+            activeTab === 'daa'
+              ? 'bg-cyan-600 text-white shadow-md shadow-cyan-900/30'
+              : 'text-slate-400 hover:text-white hover:bg-slate-800'
+          }`}
+          onClick={() => setActiveTab('daa')}
+        >
+          DAA ANALYTICS LAB
+        </button>
+      </div>
+
+      {activeTab === 'twin' ? (
+        <>
+          {/* Main focus: Digital Twin 85% | Status Panel 15% */}
+          <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+            {/* Hospital 3D - occupies 85% */}
+            <div className="flex-[85] relative min-h-0 flex flex-col">
+              <HospitalScene />
+              <TwinExplanationOverlay />
+              <RoomInfoPanel />
+              <PersonInfoPanel />
+              <div className="absolute top-2 right-2 z-10 max-w-xs">
+                <HospitalControls />
+              </div>
+            </div>
+            {/* Status Panel - occupies 15% */}
+            <div className="flex-[15] min-h-0 border-t border-slate-700/50 overflow-hidden bg-slate-900/40">
+              <MetricsDashboard />
             </div>
           </div>
-          {/* Status Panel */}
-          <div className="shrink-0 border-t border-slate-700/50 overflow-hidden">
-            <MetricsDashboard />
-          </div>
-        </div>
 
-        {/* Right Panel */}
-        <div className="w-[35%] min-h-0 flex flex-col overflow-hidden">
-          <div className="flex-1 min-h-0 overflow-hidden">
+          {/* Bottom Panel */}
+          <div
+            className="shrink-0 overflow-y-auto border-t border-slate-800 bg-slate-950/90 scroll-thin"
+            style={{
+              maxHeight: '260px',
+              minHeight: '220px',
+            }}
+          >
+            <div className="flex flex-col gap-2 p-2">
+              <SimulationControls />
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-2 border-t border-slate-800 pt-2">
+                <ComparisonPanel />
+                <SmartTimeline />
+                <HospitalLog />
+              </div>
+            </div>
+          </div>
+        </>
+      ) : (
+        /* TAB 2: DAA ANALYTICS LAB */
+        <div className="flex-1 overflow-y-auto bg-slate-950 p-6 scroll-thin">
+          <div className="max-w-7xl mx-auto space-y-6">
+            <div className="border-b border-slate-800 pb-4">
+              <h2 className="text-xl font-bold text-cyan-400">DAA Analytics Lab</h2>
+              <p className="text-xs text-slate-400 mt-1">
+                Explore real-time algorithmic execution, priority heaps, shortest path routing, and knapsack resource allocations.
+              </p>
+            </div>
             <DaaConsole />
-          </div>
-          <div className="h-40 shrink-0 border-t border-slate-700/50 overflow-hidden">
-            <Recommendations />
-          </div>
-        </div>
-      </div>
-
-      {/* Bottom Panel */}
-      <div
-        className="shrink-0 overflow-y-auto border-t border-slate-800 bg-slate-950/90 scroll-thin"
-        style={{
-          maxHeight: '260px',
-          minHeight: '220px',
-        }}
-      >
-        <div className="flex flex-col gap-2 p-2">
-          <SimulationControls />
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-2 border-t border-slate-800 pt-2">
-            <ComparisonPanel />
-            <SmartTimeline />
-            <HospitalLog />
+            <div className="glass p-4 rounded-xl border border-slate-800">
+              <Recommendations />
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <OutbreakReportModal />
       <SimulationLoop />
