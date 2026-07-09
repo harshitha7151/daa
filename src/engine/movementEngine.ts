@@ -87,65 +87,58 @@ export function updateMovement(
   minute: number,
   delta: number,
 ): Person[] {
-  const adjacency = buildAdjacency(rooms);
-  const edges = buildGraphEdges(rooms, config, 1);
-  const locked = new Set(ROOM_IDS.filter((id) => rooms[id].locked));
-
   return people.map((person) => {
     if (person.status === 'recovered') return person;
 
     let updated = { ...person };
 
-    const curMin = Math.floor(minute);
-    if (!updated.path.length && curMin >= updated.lastActionMinute + 15) {
-      const scheduleTarget = updated.schedule[updated.scheduleIndex % updated.schedule.length];
-      if (scheduleTarget !== updated.roomId) {
-        if (config.restrictPatientMovement && updated.role === 'patient') return updated;
-        if (config.restrictStaffMovement && (updated.role === 'doctor' || updated.role === 'nurse')) return updated;
-
-        const path = dijkstraPath(updated.roomId, scheduleTarget, edges, adjacency, locked);
-        if (path.length > 1) {
-          updated = { ...updated, path, pathIndex: 0, walkProgress: 0, targetRoomId: scheduleTarget, action: 'walking', lastActionMinute: curMin };
-        }
-      } else {
-        updated.scheduleIndex = (updated.scheduleIndex + 1) % updated.schedule.length;
-        updated.action = updated.role === 'visitor' ? 'waiting' : 'standing';
-        updated.lastActionMinute = curMin;
-      }
-    }
-
     if (updated.path.length > 0 && updated.pathIndex < updated.path.length - 1) {
-      const fromRoom = updated.roomId;
+      const fromRoom = updated.path[updated.pathIndex];
       const toRoom = updated.path[updated.pathIndex + 1];
       const fromDef = ROOM_DEFINITIONS[fromRoom];
       const toDef = ROOM_DEFINITIONS[toRoom];
-      const step = 0.8 * config.simulationSpeed * delta;
+      const step = 1.2 * delta; // Stable manual movement interpolation speed
 
-      updated.walkProgress = Math.min(1, updated.walkProgress + step);
-      updated.animPhase += delta * 8;
-      const t = updated.walkProgress;
+      if (fromDef && toDef) {
+        updated.walkProgress = Math.min(1, updated.walkProgress + step);
+        updated.animPhase += delta * 8;
+        const t = updated.walkProgress;
 
-      updated.position = [
-        fromDef.position[0] + (toDef.position[0] - fromDef.position[0]) * t,
-        fromDef.position[1] + 0.5 + Math.sin(updated.animPhase * 6) * 0.04,
-        fromDef.position[2] + (toDef.position[2] - fromDef.position[2]) * t,
-      ];
+        updated.position = [
+          fromDef.position[0] + (toDef.position[0] - fromDef.position[0]) * t,
+          fromDef.position[1] + 0.5 + Math.sin(updated.animPhase * 6) * 0.04,
+          fromDef.position[2] + (toDef.position[2] - fromDef.position[2]) * t,
+        ];
 
-      if (t >= 1) {
-        updated.roomId = toRoom;
-        updated.pathIndex++;
-        updated.walkProgress = 0;
-        if (!updated.visitedRooms.includes(toRoom)) {
-          updated.visitedRooms = [...updated.visitedRooms, toRoom];
-        }
-        if (updated.pathIndex >= updated.path.length - 1) {
-          updated.path = [];
-          updated.pathIndex = 0;
-          updated.targetRoomId = null;
-          updated.scheduleIndex = (updated.scheduleIndex + 1) % updated.schedule.length;
-          updated.action = 'standing';
+        if (t >= 1) {
+          updated.roomId = toRoom;
+          updated.pathIndex++;
+          updated.walkProgress = 0;
+          if (!updated.visitedRooms.includes(toRoom)) {
+            updated.visitedRooms = [...updated.visitedRooms, toRoom];
+          }
+          if (updated.pathIndex >= updated.path.length - 1) {
+            updated.path = [];
+            updated.pathIndex = 0;
+            updated.targetRoomId = null;
+            updated.action = 'standing';
+            updated.waitingReason = 'Target Reached';
+
+            // Add scattering offset based on character ID to avoid exact center overlap
+            const hash = updated.id.charCodeAt(updated.id.length - 1);
+            const offsetX = ((hash % 5) - 2) * 0.35;
+            const offsetZ = (((hash >> 2) % 5) - 2) * 0.35;
+            updated.position = [
+              toDef.position[0] + offsetX,
+              toDef.position[1] + 0.5,
+              toDef.position[2] + offsetZ,
+            ];
+          }
         }
       }
+    } else {
+      updated.action = 'standing';
+      updated.waitingReason = 'Awaiting manual control';
     }
 
     return updated;

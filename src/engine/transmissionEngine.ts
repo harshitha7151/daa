@@ -3,15 +3,17 @@ import { CASE_STUDIES } from '../data/hospitalData';
 import { ROOM_IDS } from '../types';
 
 let txCounter = 0;
+let attCounter = 0;
 
 export function runTransmissionStep(
   people: Person[],
   rooms: Record<RoomId, RoomState>,
   config: SimulationConfig,
   minute: number,
-): { people: Person[]; rooms: Record<RoomId, RoomState>; events: TransmissionEvent[] } {
+): { people: Person[]; rooms: Record<RoomId, RoomState>; events: TransmissionEvent[]; attempts: any[] } {
   const disease = CASE_STUDIES[config.caseStudy];
   const events: TransmissionEvent[] = [];
+  const attempts: any[] = [];
   let updatedPeople = people.map((p) => ({ ...p }));
   let updatedRooms = { ...rooms };
 
@@ -19,13 +21,15 @@ export function runTransmissionStep(
     updatedRooms[id] = { ...updatedRooms[id] };
   }
 
-  const spreadRate = config.diseaseSpreadSpeed * disease.spreadMultiplier * 0.001;
+  const spreadRate = config.diseaseSpreadSpeed * disease.spreadMultiplier * 0.02;
 
   for (let i = 0; i < updatedPeople.length; i++) {
     const person = updatedPeople[i];
 
     if (person.status === 'exposed' && person.exposedAtMinute !== null) {
-      if (minute - person.exposedAtMinute >= disease.incubationMinutes / config.simulationSpeed) {
+      // 30x faster incubation for manual demonstration purposes
+      const demoIncubation = Math.max(3, disease.incubationMinutes / 30);
+      if (minute - person.exposedAtMinute >= demoIncubation) {
         updatedPeople[i] = {
           ...person,
           status: 'infected',
@@ -69,7 +73,21 @@ export function runTransmissionStep(
         let prob = computeTransmissionProb(source, target, disease, room, crowdBoost, cleanPenalty);
         prob *= spreadRate * 60;
 
-        if (Math.random() < prob) {
+        const rand = Math.random();
+        const success = rand < prob;
+
+        attempts.push({
+          id: `att-${++attCounter}`,
+          minute,
+          sourceId: source.id,
+          targetId: target.id,
+          roomId,
+          prob,
+          rand,
+          success,
+        });
+
+        if (success) {
           updatedPeople = updatedPeople.map((p) =>
             p.id === target.id
               ? {
@@ -114,7 +132,7 @@ export function runTransmissionStep(
     }
   }
 
-  return { people: updatedPeople, rooms: updatedRooms, events };
+  return { people: updatedPeople, rooms: updatedRooms, events, attempts };
 }
 
 function computeTransmissionProb(

@@ -10,7 +10,7 @@ import {
 import type { Person, RoomId } from '../../types';
 import { ROOM_IDS } from '../../types';
 
-type HighlightKind = 'bfs' | 'dijkstra' | 'heap' | 'knapsack' | 'merge' | null;
+type HighlightKind = 'bfs' | 'dijkstra' | 'heap' | 'knapsack' | 'merge' | 'floyd' | null;
 
 function useRoomHighlight(roomId: string): HighlightKind {
   const daa = useSimulationStore((s) => s.daa);
@@ -19,15 +19,68 @@ function useRoomHighlight(roomId: string): HighlightKind {
   if (daa.knapsack.selected.includes(roomId as RoomId)) return 'knapsack';
   if (daa.dijkstra.path.includes(roomId as RoomId)) return 'dijkstra';
   if (daa.mergeSort.sorted[0]?.roomId === roomId) return 'merge';
+  
+  // Floyd-Warshall recommendation check
+  const isFloyd = daa.recommendations.find(r => r.algorithm === 'Floyd-Warshall' && r.actionParams?.roomId === roomId);
+  if (isFloyd) return 'floyd';
   return null;
 }
 
 const HIGHLIGHT_COLORS: Record<NonNullable<HighlightKind>, string> = {
-  bfs: '#06b6d4',
-  dijkstra: '#f59e0b',
-  heap: '#ef4444',
-  knapsack: '#22c55e',
-  merge: '#a855f7',
+  bfs: '#3b82f6', // Blue: Predicted Infection
+  dijkstra: '#f97316', // Orange: Transmission Path
+  heap: '#a855f7', // Purple: Highest Priority
+  knapsack: '#22c55e', // Green: Recommended Sanitization
+  merge: '#ef4444', // Red: Critical Room
+  floyd: '#64748b', // Slate: Indirect transit route
+};
+
+const BADGE_TEXTS: Record<NonNullable<HighlightKind>, string> = {
+  knapsack: 'Recommended Sanitization',
+  dijkstra: 'Transmission Path',
+  bfs: 'Predicted Next Infection',
+  heap: 'Highest Priority',
+  merge: 'Critical Room',
+  floyd: 'Indirect Transit Route',
+};
+
+interface AlgoPopupDetails {
+  purpose: string;
+  whyThisRoom: string;
+  recommendation: string;
+}
+
+const POPUP_DETAILS: Record<string, (roomName: string) => AlgoPopupDetails> = {
+  knapsack: (roomName) => ({
+    purpose: 'Selects the best rooms to sanitize within the available budget.',
+    whyThisRoom: `${roomName} currently provides the highest reduction in outbreak risk for the available cleaning budget.`,
+    recommendation: `Sanitize ${roomName} immediately.`,
+  }),
+  dijkstra: (roomName) => ({
+    purpose: 'Computes the shortest path of disease transmission between Patient Zero and the ICU.',
+    whyThisRoom: `${roomName} lies directly on the high-risk transmission path. Movement through here poses severe cross-contamination risks.`,
+    recommendation: `Restrict movement and sanitize corridors in ${roomName}.`,
+  }),
+  bfs: (roomName) => ({
+    purpose: 'Performs a breadth-first search to predict the next wave of room contamination.',
+    whyThisRoom: `Pathogen level trends and room adjacency mapping project that ${roomName} is the next room to be contaminated.`,
+    recommendation: `Isolate patients and pre-emptively clean ${roomName}.`,
+  }),
+  heap: (roomName) => ({
+    purpose: 'Maintains a Max Heap priority queue to sort rooms by risk score.',
+    whyThisRoom: `${roomName} is currently positioned at the root of the heap with the highest priority score.`,
+    recommendation: `Apply intensive clinical sanitization protocols to ${roomName} immediately.`,
+  }),
+  merge: (roomName) => ({
+    purpose: 'Sorts all hospital rooms by active contamination level to establish intervention ranking.',
+    whyThisRoom: `${roomName} ranks as the most critical risk room in the sorted list.`,
+    recommendation: `Prioritize ${roomName} in the intervention queue.`,
+  }),
+  floyd: (roomName) => ({
+    purpose: 'Calculates all-pairs shortest paths to discover indirect spread routes across wards.',
+    whyThisRoom: `${roomName} acts as a key transit bridge between separate wings, making it a super-spreader node.`,
+    recommendation: `Lock ${roomName} to force safe transit detours.`,
+  }),
 };
 
 /** Detailed Room Furniture Assets */
@@ -471,16 +524,23 @@ function ArchitecturalRoom({
       <RoomAssets assets={assets} w={w} d={d} />
 
       <Html position={[0, h + 0.8, 0]} center distanceFactor={28} zIndexRange={[100, 0]}>
-        <div className={`px-2.5 py-1 rounded-md text-[11px] font-bold whitespace-nowrap pointer-events-none shadow-xl border transition-all ${
-          highlight === 'bfs' ? 'bg-cyan-500/90 text-white border-cyan-300 shadow-cyan-500/20' :
-          highlight === 'heap' ? 'bg-red-500/90 text-white border-red-300 animate-pulse shadow-red-500/20' :
-          highlight === 'knapsack' ? 'bg-green-600/90 text-white border-green-300 shadow-green-500/20' :
-          highlight === 'dijkstra' ? 'bg-amber-500/90 text-white border-amber-300 shadow-amber-500/20' :
-          'bg-slate-900/92 text-white border-slate-700'
-        }`}>
-          {name}
-          {contamination > 0.08 && <span className="ml-1.5 text-orange-300 font-extrabold">{(contamination * 100).toFixed(0)}%</span>}
-          {highlight && <span className="ml-1 text-[9px] font-light opacity-80">({highlight})</span>}
+        <div 
+          onClick={(e) => {
+            e.stopPropagation();
+            onClick?.();
+          }}
+          className={`px-3 py-1.5 rounded-lg text-[10px] font-extrabold whitespace-nowrap cursor-pointer shadow-2xl border transition-all hover:scale-105 select-none ${
+            highlight === 'bfs' ? 'bg-blue-600 text-white border-blue-400 shadow-blue-500/20' :
+            highlight === 'heap' ? 'bg-purple-600 text-white border-purple-400 shadow-purple-500/20' :
+            highlight === 'knapsack' ? 'bg-green-600 text-white border-green-400 shadow-green-500/20' :
+            highlight === 'dijkstra' ? 'bg-orange-500 text-white border-orange-400 shadow-orange-500/20' :
+            highlight === 'merge' ? 'bg-red-600 text-white border-red-400 shadow-red-500/20 animate-pulse' :
+            highlight === 'floyd' ? 'bg-slate-700 text-white border-slate-500 shadow-slate-500/10' :
+            'bg-slate-900/90 text-slate-200 border-slate-700'
+          }`}
+        >
+          {highlight ? BADGE_TEXTS[highlight] : name}
+          {contamination > 0.08 && <span className="ml-1.5 text-yellow-300 font-extrabold">{(contamination * 100).toFixed(0)}%</span>}
         </div>
       </Html>
     </group>
@@ -506,13 +566,16 @@ function LowPolyHuman({ person }: { person: Person }) {
     if (!onBed) return 0;
     const def = ROOM_DEFINITIONS[person.roomId as RoomId];
     if (!def) return 0;
-    // Alternate left/right bed
-    const side = person.id.charCodeAt(person.id.length - 1) % 2 === 0 ? -0.28 : 0.28;
-    return def.size[0] * side;
+    
+    // Distribute among multiple coordinates based on ID hash
+    const hash = person.id.charCodeAt(person.id.length - 1) + (person.id.charCodeAt(person.id.length - 2) || 0);
+    const side = hash % 2 === 0 ? -0.25 : 0.25;
+    const variance = ((hash % 5) - 2) * 0.18; // Small shift along the bed axis to avoid overlaps
+    return def.size[0] * side + variance;
   }, [onBed, person.id, person.roomId]);
 
-  const bedY = onBed ? 0.7 : 0;
-  const bedZ = onBed ? -0.5 : 0;
+  const bedY = onBed ? 0.72 : 0;
+  const bedZ = onBed ? -0.45 : 0;
 
   useFrame((_, delta) => {
     if (person.action === 'walking') {
@@ -554,17 +617,27 @@ function LowPolyHuman({ person }: { person: Person }) {
 
   // Reposition character slightly to stand beside patient if role is Doctor/Nurse in a bed room
   const localPos: [number, number, number] = useMemo(() => {
+    const def = ROOM_DEFINITIONS[person.roomId as RoomId];
+    if (!def) return person.position;
+
     if (onBed && person.role === 'patient') {
-      return [bedX, bedY, bedZ];
+      return [
+        def.position[0] + bedX,
+        def.position[1] + bedY,
+        def.position[2] + bedZ
+      ];
     }
     // Doctors/Nurses stand next to the beds in Ward/ICU if patients are present
     if (isBedRoom && (person.role === 'doctor' || person.role === 'nurse') && person.action !== 'walking') {
-      const side = person.id.charCodeAt(person.id.length - 1) % 2 === 0 ? -0.28 : 0.28;
-      const def = ROOM_DEFINITIONS[person.roomId as RoomId];
-      if (def) {
-        // Positioned next to the bed
-        return [def.size[0] * side + 1.1, 0.4, -0.5];
-      }
+      const hash = person.id.charCodeAt(person.id.length - 1);
+      const side = hash % 2 === 0 ? -0.25 : 0.25;
+      const shiftZ = ((hash % 3) - 1) * 0.3;
+      // Positioned next to the bed relative to room absolute position
+      return [
+        def.position[0] + def.size[0] * side + 0.9,
+        def.position[1] + 0.4,
+        def.position[2] - 0.4 + shiftZ
+      ];
     }
     return person.position;
   }, [person.position, person.role, person.roomId, onBed, isBedRoom, bedX, bedY, bedZ]);
@@ -766,6 +839,85 @@ function DijkstraPathViz() {
   );
 }
 
+function ActivePathsViz() {
+  const people = useSimulationStore((s) => s.people);
+  const selectedPersonId = useSimulationStore((s) => s.selectedPersonId);
+  const [pulse, setPulse] = useState(0);
+
+  useFrame((_, delta) => {
+    setPulse((p) => (p + delta * 2.5) % 1);
+  });
+
+  return (
+    <group>
+      {people.map((person) => {
+        if (person.path.length < 2 || person.action !== 'walking') return null;
+
+        const isSelected = person.id === selectedPersonId;
+        const color =
+          person.role === 'patient' ? '#60a5fa' :
+          person.role === 'doctor' ? '#f8fafc' :
+          person.role === 'nurse' ? '#facc15' :
+          person.role === 'cleaning' ? '#4ade80' : '#c084fc';
+
+        const points = person.path.map((roomId) => {
+          const p = getRoomPosition(roomId);
+          return new THREE.Vector3(p[0], p[1] + 0.15, p[2]);
+        });
+
+        const currentIdx = person.pathIndex;
+        const nextIdx = Math.min(person.path.length - 1, currentIdx + 1);
+        const pFrom = getRoomPosition(person.path[currentIdx]);
+        const pTo = getRoomPosition(person.path[nextIdx]);
+
+        const dotPos = new THREE.Vector3(
+          pFrom[0] + (pTo[0] - pFrom[0]) * person.walkProgress,
+          pFrom[1] + 1.6,
+          pFrom[2] + (pTo[2] - pFrom[2]) * person.walkProgress
+        );
+
+        return (
+          <group key={person.id}>
+            <Line
+              points={points}
+              color={color}
+              lineWidth={isSelected ? 4 : 2}
+              opacity={isSelected ? 0.95 : 0.45}
+              transparent
+            />
+
+            {points.slice(0, -1).map((p, idx) => {
+              const pNext = points[idx + 1];
+              const arrowPos = new THREE.Vector3().lerpVectors(p, pNext, pulse);
+              const dir = new THREE.Vector3().subVectors(pNext, p).normalize();
+              return (
+                <group key={idx} position={arrowPos.toArray()} rotation={[0, Math.atan2(dir.x, dir.z) + Math.PI, 0]}>
+                  <mesh rotation={[Math.PI / 2, 0, 0]}>
+                    <coneGeometry args={[0.15, 0.4, 4]} />
+                    <meshBasicMaterial color={color} transparent opacity={isSelected ? 0.85 : 0.4} />
+                  </mesh>
+                </group>
+              );
+            })}
+
+            {isSelected && (
+              <mesh position={points[points.length - 1].toArray()} rotation={[-Math.PI / 2, 0, 0]}>
+                <ringGeometry args={[1.1, 1.3, 32]} />
+                <meshBasicMaterial color={color} transparent opacity={0.8} side={THREE.DoubleSide} />
+              </mesh>
+            )}
+
+            <mesh position={dotPos.toArray()}>
+              <sphereGeometry args={[0.18, 8, 8]} />
+              <meshBasicMaterial color={color} />
+            </mesh>
+          </group>
+        );
+      })}
+    </group>
+  );
+}
+
 /** Detailed Transmission Path Flows & Directional Arrows */
 function TransmissionEffects() {
   const events = useSimulationStore((s) => s.transmissionEvents);
@@ -946,6 +1098,7 @@ function SceneContent() {
       ))}
 
       <DijkstraPathViz />
+      <ActivePathsViz />
       {people.map((p) => <LowPolyHuman key={p.id} person={p} />)}
       <TransmissionEffects />
 
@@ -1042,7 +1195,7 @@ export function TwinExplanationOverlay() {
     messages.push(`BFS: ${ROOM_DEFINITIONS[bfs.nextPredicted].name} highlighted — next predicted infection wave (level ${bfs.level}).`);
   }
   if (daa.dijkstra.path.length > 1) {
-    messages.push(`Dijkstra: amber path shows highest-risk transmission route (cost ${daa.dijkstra.cost.toFixed(1)}).`);
+    messages.push(`Dijkstra: orange path shows highest-risk transmission route (cost ${daa.dijkstra.cost.toFixed(1)}).`);
   }
   if (heap.root) {
     messages.push(`Heap: ${ROOM_DEFINITIONS[heap.root].name} glowing red — highest infection priority.`);

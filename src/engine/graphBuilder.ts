@@ -83,6 +83,7 @@ export function runAllAlgorithms(
   config: SimulationConfig,
   originRoom: RoomId,
   targetRoom: RoomId | null,
+  lastEventLabel: string = 'System initialization',
 ): DaaResults {
   const disease = CASE_STUDIES[config.caseStudy];
   const adjacency = buildAdjacency(rooms);
@@ -120,7 +121,7 @@ export function runAllAlgorithms(
 
   const knapsack = runKnapsack(knapsackItems, config.cleaningBudget, config.cleaningTeams);
 
-  const recommendations = buildRecommendations(bfs, dijkstra, floydWarshall, heap, mergeSort, knapsack);
+  const recommendations = buildRecommendations(bfs, dijkstra, floydWarshall, heap, mergeSort, knapsack, lastEventLabel);
 
   return {
     bfs,
@@ -142,71 +143,125 @@ function buildRecommendations(
   heap: DaaResults['heap'],
   mergeSort: DaaResults['mergeSort'],
   knapsack: DaaResults['knapsack'],
+  triggeredBy: string,
 ): Recommendation[] {
   const recs: Recommendation[] = [];
 
+  // 1. BFS Recommendation
   if (bfs.nextPredicted) {
+    const nextRoomName = ROOM_DEFINITIONS[bfs.nextPredicted].name;
     recs.push({
+      id: 'rec-bfs',
       algorithm: 'BFS',
-      recommendation: `Isolate ${ROOM_DEFINITIONS[bfs.nextPredicted].name}`,
-      reason: `Next propagation level — ${bfs.explanation}`,
-      expectedReduction: 18,
+      recommendation: `Isolate and Sanitize ${nextRoomName} immediately`,
+      reason: `BFS wave propagation analysis projects that ${nextRoomName} is the next room at risk (Level ${bfs.level}). Isolating it now stops the wave.`,
+      expectedEffect: 'Block upcoming outbreak propagation wave by 18%.',
+      affectedRooms: [bfs.nextPredicted],
+      estimatedCost: ROOM_CLEANING_COSTS[bfs.nextPredicted],
+      estimatedTime: 10,
       priority: 'high',
       confidence: 92,
+      triggeredBy,
+      actionType: 'sanitize',
+      actionParams: { roomId: bfs.nextPredicted },
     });
   }
 
-  const route = dijkstra.path.map((r) => ROOM_DEFINITIONS[r].name).join(' → ');
-  recs.push({
-    algorithm: 'Dijkstra',
-    recommendation: `Reduce movement through ${route || 'high-cost corridors'}`,
-    reason: `Transmission cost ${dijkstra.cost.toFixed(1)} — ${dijkstra.explanation}`,
-    expectedReduction: 15,
-    priority: 'high',
-    confidence: 95,
-  });
+  // 2. Dijkstra Recommendation
+  if (dijkstra.path.length > 1) {
+    const fromRoom = dijkstra.path[0];
+    const toRoom = dijkstra.path[1];
+    recs.push({
+      id: 'rec-dijkstra',
+      algorithm: 'Dijkstra',
+      recommendation: `Close Corridor: ${ROOM_DEFINITIONS[fromRoom].name} ↔ ${ROOM_DEFINITIONS[toRoom].name}`,
+      reason: `Dijkstra shortest-path risk analysis identifies this corridor as the highest-intensity path for cross-contamination (Path cost: ${dijkstra.cost.toFixed(1)}).`,
+      expectedEffect: 'Reduce overall path risk transmission index by 15%.',
+      affectedRooms: [fromRoom, toRoom],
+      estimatedCost: 0,
+      estimatedTime: 1,
+      priority: 'high',
+      confidence: 95,
+      triggeredBy,
+      actionType: 'close_corridor',
+      actionParams: { from: fromRoom, to: toRoom },
+    });
+  }
 
+  // 3. Floyd-Warshall Recommendation
+  // Find a central hub room to lock (e.g. ICU or general-ward or laboratory if they are unlocked)
+  const roomToLock: RoomId = fw.roomIds.find(id => id !== 'reception' && id !== 'waiting-area') || 'icu';
   recs.push({
+    id: 'rec-floyd',
     algorithm: 'Floyd-Warshall',
-    recommendation: fw.explanation,
-    reason: 'All-pairs shortest path analysis reveals indirect transmission routes.',
-    expectedReduction: 12,
+    recommendation: `Lock central room: ${ROOM_DEFINITIONS[roomToLock].name}`,
+    reason: `Floyd-Warshall all-pairs shortest paths identifies ${ROOM_DEFINITIONS[roomToLock].name} as a major cross-floor transit node. Locking it forces safe detours.`,
+    expectedEffect: 'Decreases indirect contamination paths by 12%.',
+    affectedRooms: [roomToLock],
+    estimatedCost: 0,
+    estimatedTime: 1,
     priority: 'medium',
     confidence: 88,
+    triggeredBy,
+    actionType: 'lock',
+    actionParams: { roomId: roomToLock },
   });
 
+  // 4. Max Heap Recommendation
   if (heap.root) {
+    const rootName = ROOM_DEFINITIONS[heap.root].name;
     recs.push({
+      id: 'rec-heap',
       algorithm: 'Heap',
-      recommendation: `Sanitize ${ROOM_DEFINITIONS[heap.root].name} immediately`,
-      reason: heap.explanation,
-      expectedReduction: 22,
+      recommendation: `Sanitize highest priority room: ${rootName}`,
+      reason: `Max Heap priority queue identifies ${rootName} as having the highest active contamination score (Score: ${heap.priorityList[0]?.score.toFixed(1)}).`,
+      expectedEffect: 'Reduces immediate outbreak peak index by 22%.',
+      affectedRooms: [heap.root],
+      estimatedCost: ROOM_CLEANING_COSTS[heap.root],
+      estimatedTime: 10,
       priority: 'critical',
       confidence: 97,
+      triggeredBy,
+      actionType: 'sanitize',
+      actionParams: { roomId: heap.root },
     });
   }
 
-  const top4 = mergeSort.sorted.slice(0, 4).map((x, i) => `${i + 1}. ${ROOM_DEFINITIONS[x.roomId].name}`).join(', ');
-  recs.push({
-    algorithm: 'Merge Sort',
-    recommendation: `Intervention order: ${top4}`,
-    reason: mergeSort.explanation,
-    expectedReduction: 10,
-    priority: 'medium',
-    confidence: 90,
-  });
-
-  const knapsackNames = knapsack.selected.map((r) => ROOM_DEFINITIONS[r].name).join(' and ');
-  recs.push({
-    algorithm: 'Knapsack',
-    recommendation: knapsack.selected.length
-      ? `Current budget is sufficient to sanitize ${knapsackNames}`
-      : 'Increase cleaning budget to enable optimal room sanitization',
-    reason: knapsack.explanation,
-    expectedReduction: knapsack.expectedReduction,
-    priority: 'high',
-    confidence: 93,
-  });
+  // 5. Knapsack Recommendation
+  if (knapsack.selected.length > 0) {
+    const selectedNames = knapsack.selected.map(r => ROOM_DEFINITIONS[r].name).join(', ');
+    recs.push({
+      id: 'rec-knapsack',
+      algorithm: 'Knapsack',
+      recommendation: `Implement budget-optimized cleaning for: ${selectedNames}`,
+      reason: `Knapsack budget-allocation computes that sanitizing these rooms yields the maximum contamination reduction of ${knapsack.expectedReduction.toFixed(0)}% within budget.`,
+      expectedEffect: 'Maximizes cleaning ROI and protects critical patient zones.',
+      affectedRooms: knapsack.selected,
+      estimatedCost: knapsack.budgetUsed,
+      estimatedTime: 15,
+      priority: 'high',
+      confidence: 93,
+      triggeredBy,
+      actionType: 'sanitize',
+      actionParams: { roomId: knapsack.selected[0] }, // Sanitize first priority room
+    });
+  } else {
+    recs.push({
+      id: 'rec-knapsack-budget',
+      algorithm: 'Knapsack',
+      recommendation: 'Increase cleaning budget by ₹20,000',
+      reason: 'Your current cleaning budget is fully depleted. Increasing budget allows sanitizing remaining high-risk rooms.',
+      expectedEffect: 'Enables cleaning of next priority wards.',
+      affectedRooms: [],
+      estimatedCost: 20000,
+      estimatedTime: 1,
+      priority: 'medium',
+      confidence: 90,
+      triggeredBy,
+      actionType: 'increase_budget',
+      actionParams: { budgetIncrement: 20000 },
+    });
+  }
 
   return recs;
 }

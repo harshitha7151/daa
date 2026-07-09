@@ -1,7 +1,71 @@
-import type { HeapNode, HeapResult, RoomId } from '../types';
+import type { HeapNode, HeapResult, HeapStep, RoomId } from '../types';
 import { ROOM_DEFINITIONS } from '../data/hospitalData';
 
 export function buildMaxHeap(scores: { roomId: RoomId; score: number }[]): HeapResult {
+  const arr = [...scores];
+  const steps: HeapStep[] = [];
+  steps.push({
+    type: 'insert',
+    array: [...arr],
+    description: `Initial unsorted array of room priority scores (count: ${arr.length}).`
+  });
+
+  const n = arr.length;
+  function siftDown(i: number) {
+    let largest = i;
+    const l = 2 * i + 1;
+    const r = 2 * i + 2;
+
+    if (l < n) {
+      steps.push({
+        type: 'compare',
+        array: [...arr],
+        i: l,
+        j: largest,
+        description: `Comparing left child "${ROOM_DEFINITIONS[arr[l].roomId].name}" (${arr[l].score.toFixed(1)}) with parent "${ROOM_DEFINITIONS[arr[largest].roomId].name}" (${arr[largest].score.toFixed(1)}).`
+      });
+      if (arr[l].score > arr[largest].score) {
+        largest = l;
+      }
+    }
+
+    if (r < n) {
+      steps.push({
+        type: 'compare',
+        array: [...arr],
+        i: r,
+        j: largest,
+        description: `Comparing right child "${ROOM_DEFINITIONS[arr[r].roomId].name}" (${arr[r].score.toFixed(1)}) with currently largest "${ROOM_DEFINITIONS[arr[largest].roomId].name}" (${arr[largest].score.toFixed(1)}).`
+      });
+      if (arr[r].score > arr[largest].score) {
+        largest = r;
+      }
+    }
+
+    if (largest !== i) {
+      steps.push({
+        type: 'swap',
+        array: [...arr],
+        i,
+        j: largest,
+        description: `Swapping parent "${ROOM_DEFINITIONS[arr[i].roomId].name}" (${arr[i].score.toFixed(1)}) with child "${ROOM_DEFINITIONS[arr[largest].roomId].name}" (${arr[largest].score.toFixed(1)}) to satisfy Max Heap property.`
+      });
+      [arr[i], arr[largest]] = [arr[largest], arr[i]];
+      siftDown(largest);
+    }
+  }
+
+  // Build heap
+  for (let i = Math.floor(n / 2) - 1; i >= 0; i--) {
+    steps.push({
+      type: 'heapify',
+      array: [...arr],
+      i,
+      description: `Running heapify on subtree rooted at index ${i} ("${ROOM_DEFINITIONS[arr[i].roomId].name}").`
+    });
+    siftDown(i);
+  }
+
   const sorted = [...scores].sort((a, b) => b.score - a.score);
   const root = sorted[0]?.roomId ?? null;
 
@@ -31,6 +95,12 @@ export function buildMaxHeap(scores: { roomId: RoomId; score: number }[]): HeapR
   const rootName = root ? ROOM_DEFINITIONS[root].name : 'None';
   const topScore = sorted[0]?.score ?? 0;
 
+  steps.push({
+    type: 'extract',
+    array: [...arr],
+    description: `Max Heap constructed successfully. Root is "${rootName}" with maximum priority score of ${topScore.toFixed(1)}.`
+  });
+
   return {
     tree,
     priorityList: sorted,
@@ -44,6 +114,7 @@ export function buildMaxHeap(scores: { roomId: RoomId; score: number }[]): HeapR
       result: `Highest priority: ${rootName}`,
       clinicalMeaning: `${rootName} should receive immediate sanitization or isolation to reduce outbreak severity.`,
     },
+    steps,
   };
 }
 

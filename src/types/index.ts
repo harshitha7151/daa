@@ -75,6 +75,7 @@ export interface Person {
   walkProgress: number;
   lastActionMinute: number;
   action: 'walking' | 'standing' | 'sitting' | 'waiting';
+  waitingReason?: string;
 }
 
 export interface VisualExtraRoom {
@@ -132,6 +133,8 @@ export interface SimulationConfig {
   restrictPatientMovement: boolean;
   restrictStaffMovement: boolean;
   isolationWardOpen: boolean;
+  automaticSchedule: boolean;
+  educationalMode: boolean;
 }
 
 export interface LogEntry {
@@ -150,12 +153,40 @@ export interface TimelineEvent {
 }
 
 export interface Recommendation {
+  id: string;
   algorithm: string;
   recommendation: string;
   reason: string;
-  expectedReduction: number;
+  expectedEffect: string;
+  affectedRooms: string[];
+  estimatedCost: number;
+  estimatedTime: number;
   priority: Priority;
   confidence: number;
+  triggeredBy: string;
+  actionType: 'sanitize' | 'lock' | 'unlock' | 'close_corridor' | 'increase_budget';
+  actionParams: any;
+}
+
+export interface RecommendationHistoryEntry {
+  timeLabel: string;
+  trigger: string;
+  recommendation: string;
+  action: 'Implemented' | 'Ignored';
+}
+
+export interface RiskComparison {
+  before: {
+    risk: number;
+    recovery: number;
+    highestRiskRoom: string;
+  };
+  after: {
+    risk: number;
+    recovery: number;
+    highestRiskRoom: string;
+  };
+  actionLabel: string;
 }
 
 export interface AlgorithmEducational {
@@ -163,6 +194,16 @@ export interface AlgorithmEducational {
   inputs: Record<string, string | number>;
   result: string;
   clinicalMeaning: string;
+}
+
+export interface BfsStep {
+  currentNode: RoomId | null;
+  queue: RoomId[];
+  visited: RoomId[];
+  checkingNeighbor: RoomId | null;
+  tree: Record<RoomId, RoomId | null>;
+  level: number;
+  description: string;
 }
 
 export interface BfsResult {
@@ -174,6 +215,20 @@ export interface BfsResult {
   levels: RoomId[][];
   explanation: string;
   educational: AlgorithmEducational;
+  steps?: BfsStep[];
+}
+
+export interface DijkstraStep {
+  currentNode: RoomId | null;
+  visited: RoomId[];
+  distances: Record<RoomId, number>;
+  previous: Record<RoomId, RoomId | null>;
+  checkingNeighbor: RoomId | null;
+  edgeWeight: number | null;
+  oldDistance: number | null;
+  newDistance: number | null;
+  updated: boolean;
+  description: string;
 }
 
 export interface DijkstraResult {
@@ -184,6 +239,7 @@ export interface DijkstraResult {
   edgeWeights: { from: RoomId; to: RoomId; weight: number; explanation: string }[];
   explanation: string;
   educational: AlgorithmEducational;
+  steps?: DijkstraStep[];
 }
 
 export interface FloydWarshallResult {
@@ -203,12 +259,21 @@ export interface HeapNode {
   right?: HeapNode;
 }
 
+export interface HeapStep {
+  type: 'insert' | 'compare' | 'swap' | 'heapify' | 'extract';
+  array: { roomId: RoomId; score: number }[];
+  i?: number;
+  j?: number;
+  description: string;
+}
+
 export interface HeapResult {
   tree: HeapNode | null;
   priorityList: { roomId: RoomId; score: number }[];
   root: RoomId | null;
   explanation: string;
   educational: AlgorithmEducational;
+  steps?: HeapStep[];
 }
 
 export interface MergeSortStep {
@@ -226,6 +291,18 @@ export interface MergeSortResult {
   educational: AlgorithmEducational;
 }
 
+export interface KnapsackStep {
+  itemIndex: number;
+  currentItem: RoomId | null;
+  itemCost: number;
+  itemValue: number;
+  currentBudget: number;
+  decision: 'checking' | 'select' | 'reject' | 'backtrack';
+  selectedList: RoomId[];
+  dpRow: number[];
+  description: string;
+}
+
 export interface KnapsackResult {
   selected: RoomId[];
   rejected: RoomId[];
@@ -234,6 +311,7 @@ export interface KnapsackResult {
   expectedReduction: number;
   explanation: string;
   educational: AlgorithmEducational;
+  steps?: KnapsackStep[];
 }
 
 export interface DaaResults {

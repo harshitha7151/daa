@@ -1,4 +1,4 @@
-import type { BfsResult, RoomId } from '../types';
+import type { BfsResult, BfsStep, RoomId } from '../types';
 import { ROOM_DEFINITIONS } from '../data/hospitalData';
 
 export function runBfs(
@@ -14,17 +14,60 @@ export function runBfs(
   let level = 0;
   let qi = 0;
 
+  const steps: BfsStep[] = [];
+  steps.push({
+    currentNode: null,
+    queue: [...queue],
+    visited: [...visited],
+    checkingNeighbor: null,
+    tree: { ...tree } as Record<RoomId, RoomId | null>,
+    level: 0,
+    description: `Initialize BFS: starting propagation wave analysis at root room "${ROOM_DEFINITIONS[root].name}".`
+  });
+
   while (qi < queue.length) {
     const levelSize = queue.length - qi;
     const currentLevel: RoomId[] = [];
     for (let i = 0; i < levelSize; i++) {
       const node = queue[qi++];
+      
+      steps.push({
+        currentNode: node,
+        queue: queue.slice(qi - 1),
+        visited: [...visited],
+        checkingNeighbor: null,
+        tree: { ...tree } as Record<RoomId, RoomId | null>,
+        level,
+        description: `Dequeue node "${ROOM_DEFINITIONS[node].name}" at wave depth ${level} to analyze adjacent connections.`
+      });
+
       for (const neighbor of adjacency[node] ?? []) {
-        if (!visited.has(neighbor)) {
+        const isVisited = visited.has(neighbor);
+        steps.push({
+          currentNode: node,
+          queue: queue.slice(qi),
+          visited: [...visited],
+          checkingNeighbor: neighbor,
+          tree: { ...tree } as Record<RoomId, RoomId | null>,
+          level,
+          description: `Checking connection from "${ROOM_DEFINITIONS[node].name}" to adjacent room "${ROOM_DEFINITIONS[neighbor].name}".`
+        });
+
+        if (!isVisited) {
           visited.add(neighbor);
           queue.push(neighbor);
           tree[neighbor] = node;
           currentLevel.push(neighbor);
+
+          steps.push({
+            currentNode: node,
+            queue: queue.slice(qi),
+            visited: [...visited],
+            checkingNeighbor: neighbor,
+            tree: { ...tree } as Record<RoomId, RoomId | null>,
+            level,
+            description: `Room "${ROOM_DEFINITIONS[neighbor].name}" is unvisited. Adding it to queue and marking parent as "${ROOM_DEFINITIONS[node].name}".`
+          });
         }
       }
     }
@@ -65,5 +108,6 @@ export function runBfs(
         ? `If ${nextName} is sanitized now, the next infection wave can be delayed.`
         : 'All reachable rooms have been analyzed for propagation risk.',
     },
+    steps,
   };
 }

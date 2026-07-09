@@ -1,4 +1,4 @@
-import type { DijkstraResult, GraphEdge, RoomId } from '../types';
+import type { DijkstraResult, DijkstraStep, GraphEdge, RoomId } from '../types';
 import { ROOM_DEFINITIONS } from '../data/hospitalData';
 
 interface DijkstraCoreResult {
@@ -6,6 +6,7 @@ interface DijkstraCoreResult {
   cost: number;
   edgeWeights: { from: RoomId; to: RoomId; weight: number; explanation: string }[];
   edgeMap: Map<string, GraphEdge>;
+  steps: DijkstraStep[];
 }
 
 /** Core Dijkstra — no safer-path recursion */
@@ -22,9 +23,10 @@ function dijkstraCore(
   });
   Object.keys(adjacency).forEach((k) => nodes.add(k as RoomId));
 
-  const dist: Record<string, number> = {};
-  const prev: Record<string, RoomId | null> = {};
+  const dist: Record<RoomId, number> = {} as Record<RoomId, number>;
+  const prev: Record<RoomId, RoomId | null> = {} as Record<RoomId, RoomId | null>;
   const visited = new Set<string>();
+  const steps: DijkstraStep[] = [];
 
   for (const n of nodes) {
     dist[n] = Infinity;
@@ -38,6 +40,20 @@ function dijkstraCore(
     edgeMap.set(`${e.to}|${e.from}`, e);
   }
 
+  steps.push({
+    currentNode: null,
+    visited: [],
+    distances: { ...dist },
+    previous: { ...prev } as Record<RoomId, RoomId | null>,
+    checkingNeighbor: null,
+    edgeWeight: null,
+    oldDistance: null,
+    newDistance: null,
+    updated: false,
+    description: `Initialize Dijkstra: Start at "${ROOM_DEFINITIONS[source].name}" (distance 0), all other rooms set to Infinity.`
+  });
+
+  const visitedList: RoomId[] = [];
   while (visited.size < nodes.size) {
     let u: RoomId | null = null;
     let minD = Infinity;
@@ -49,12 +65,57 @@ function dijkstraCore(
     }
     if (u === null || minD === Infinity) break;
     visited.add(u);
+    visitedList.push(u);
+
+    steps.push({
+      currentNode: u,
+      visited: [...visitedList],
+      distances: { ...dist },
+      previous: { ...prev } as Record<RoomId, RoomId | null>,
+      checkingNeighbor: null,
+      edgeWeight: null,
+      oldDistance: null,
+      newDistance: null,
+      updated: false,
+      description: `Select node "${ROOM_DEFINITIONS[u].name}" with minimum distance ${minD.toFixed(2)} to relax adjacent corridors.`
+    });
 
     for (const v of adjacency[u] ?? []) {
       const edge = edgeMap.get(`${u}|${v}`);
-      if (!edge || edge.closed) continue;
+      if (!edge || edge.closed) {
+        steps.push({
+          currentNode: u,
+          visited: [...visitedList],
+          distances: { ...dist },
+          previous: { ...prev } as Record<RoomId, RoomId | null>,
+          checkingNeighbor: v,
+          edgeWeight: null,
+          oldDistance: null,
+          newDistance: null,
+          updated: false,
+          description: `Corridor from "${ROOM_DEFINITIONS[u].name}" to "${ROOM_DEFINITIONS[v].name}" is locked or closed. Skipping.`
+        });
+        continue;
+      }
+      
       const alt = dist[u] + edge.weight;
-      if (alt < dist[v]) {
+      const oldD = dist[v];
+      const updated = alt < oldD;
+
+      steps.push({
+        currentNode: u,
+        visited: [...visitedList],
+        distances: { ...dist },
+        previous: { ...prev } as Record<RoomId, RoomId | null>,
+        checkingNeighbor: v,
+        edgeWeight: edge.weight,
+        oldDistance: oldD,
+        newDistance: alt,
+        updated,
+        description: `Checking corridor "${ROOM_DEFINITIONS[u].name}" ↔ "${ROOM_DEFINITIONS[v].name}" (weight ${edge.weight}). Total path cost through ${ROOM_DEFINITIONS[u].name}: ${alt.toFixed(2)}. Previous distance to ${ROOM_DEFINITIONS[v].name}: ${oldD === Infinity ? '∞' : oldD.toFixed(2)}. ${updated ? 'Shorter path found — distance updated!' : 'No improvement — keep old distance.'}`
+      });
+
+      if (updated) {
         dist[v] = alt;
         prev[v] = u;
       }
@@ -80,7 +141,7 @@ function dijkstraCore(
   });
 
   const cost = dist[target] === Infinity ? 999 : dist[target];
-  return { path, cost, edgeWeights, edgeMap };
+  return { path, cost, edgeWeights, edgeMap, steps };
 }
 
 export function runDijkstra(
@@ -114,6 +175,7 @@ export function runDijkstra(
       result: `Path cost: ${primary.cost.toFixed(2)}`,
       clinicalMeaning: 'Restricting movement through high-cost corridors can slow pathogen spread to critical care areas.',
     },
+    steps: primary.steps,
   };
 }
 

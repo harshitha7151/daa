@@ -1,4 +1,4 @@
-import type { KnapsackResult, RoomId } from '../types';
+import type { KnapsackResult, KnapsackStep, RoomId } from '../types';
 import { ROOM_CLEANING_COSTS, ROOM_DEFINITIONS } from '../data/hospitalData';
 
 export interface KnapsackItem {
@@ -29,12 +29,54 @@ export function runKnapsack(
     }
   }
 
+  const steps: KnapsackStep[] = [];
   const selected: RoomId[] = [];
   let wgt = cap;
+
+  steps.push({
+    itemIndex: n,
+    currentItem: null,
+    itemCost: 0,
+    itemValue: 0,
+    currentBudget: wgt * 1000,
+    decision: 'backtrack',
+    selectedList: [],
+    dpRow: [],
+    description: `Constructed Knapsack DP table. Starting backtracking from item count ${n} with capacity ₹${(wgt * 1000).toLocaleString()}.`
+  });
+
   for (let i = n; i > 0; i--) {
-    if (keep[i][wgt]) {
-      selected.push(items[i - 1].roomId);
-      wgt -= Math.floor(items[i - 1].cost / 1000);
+    const item = items[i - 1];
+    const isKept = keep[i][wgt];
+    const itemCost = item.cost;
+    const itemValue = item.value;
+
+    if (isKept) {
+      selected.push(item.roomId);
+      wgt -= Math.floor(itemCost / 1000);
+      steps.push({
+        itemIndex: i - 1,
+        currentItem: item.roomId,
+        itemCost,
+        itemValue,
+        currentBudget: wgt * 1000,
+        decision: 'select',
+        selectedList: [...selected],
+        dpRow: dp[i],
+        description: `Backtrack decision: Select "${ROOM_DEFINITIONS[item.roomId].name}" (Value: ${itemValue.toFixed(1)}, Cost: ₹${itemCost.toLocaleString()}). Capacity left: ₹${(wgt * 1000).toLocaleString()}.`
+      });
+    } else {
+      steps.push({
+        itemIndex: i - 1,
+        currentItem: item.roomId,
+        itemCost,
+        itemValue,
+        currentBudget: wgt * 1000,
+        decision: 'reject',
+        selectedList: [...selected],
+        dpRow: dp[i],
+        description: `Backtrack decision: Skip "${ROOM_DEFINITIONS[item.roomId].name}" (Value: ${itemValue.toFixed(1)}, Cost: ₹${itemCost.toLocaleString()}) to preserve remaining budget.`
+      });
     }
   }
 
@@ -63,5 +105,6 @@ export function runKnapsack(
       result: `Selected: ${teamLimited.length} rooms, ${expectedReduction.toFixed(0)}% reduction`,
       clinicalMeaning: 'Resource allocation should prioritize rooms with highest risk-reduction value per rupee spent.',
     },
+    steps,
   };
 }

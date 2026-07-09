@@ -13,12 +13,15 @@ import type {
   TransmissionEvent,
   Trend,
   DaaResults,
+  RecommendationHistoryEntry,
+  RiskComparison,
 } from '../types';
 import { CASE_STUDIES, HOSPITAL_NAME, ROOM_CLEANING_COSTS, ROOM_DEFINITIONS, formatSimTime } from '../data/hospitalData';
 import { ROOM_IDS } from '../types';
 import { createPopulation, assignRoomOccupancy, updateMovement } from '../engine/movementEngine';
+import { dijkstraPath } from '../algorithms/dijkstra';
 import { initializeRooms, infectPatientZero, runTransmissionStep } from '../engine/transmissionEngine';
-import { computeRecovery, computeRiskScore, runAllAlgorithms } from '../engine/graphBuilder';
+import { computeRecovery, computeRiskScore, runAllAlgorithms, buildAdjacency, buildGraphEdges } from '../engine/graphBuilder';
 
 const DEFAULT_CONFIG: SimulationConfig = {
   caseStudy: 'mrsa',
@@ -38,21 +41,25 @@ const DEFAULT_CONFIG: SimulationConfig = {
   restrictPatientMovement: false,
   restrictStaffMovement: false,
   isolationWardOpen: false,
+  automaticSchedule: false,
+  educationalMode: false,
 };
 
 let logCounter = 0;
 let timelineCounter = 0;
 
 function emptyDaa(): DaaResults {
-  return runAllAlgorithms(initializeRooms(), DEFAULT_CONFIG, 'ward-1', 'icu');
+  const daa = runAllAlgorithms(initializeRooms(), DEFAULT_CONFIG, 'ward-1', 'icu', 'System initialization');
+  daa.recommendations = [];
+  return daa;
 }
 
 function addLog(logs: LogEntry[], minute: number, message: string, type: LogEntry['type'] = 'info'): LogEntry[] {
-  return [{ id: `log-${++logCounter}`, minute, timeLabel: formatSimTime(minute), message, type }, ...logs].slice(0, 200);
+  return [{ id: `log-${++logCounter}`, minute, timeLabel: formatSimTime(minute), message, type }, ...logs].slice(0, 100);
 }
 
 function addTimeline(events: TimelineEvent[], minute: number, message: string): TimelineEvent[] {
-  return [...events, { id: `tl-${++timelineCounter}`, minute, timeLabel: formatSimTime(minute), message }].slice(-100);
+  return [...events, { id: `tl-${++timelineCounter}`, minute, timeLabel: formatSimTime(minute), message }].slice(-50);
 }
 
 interface SimStore {
@@ -83,6 +90,11 @@ interface SimStore {
   outbreakReport: OutbreakReport | null;
   activeFloor: 'all' | 'ground' | 'first';
   mergeSortAnimStep: number;
+
+  // Decision Support UI States
+  lastEventLabel: string;
+  lastComparison: RiskComparison | null;
+  recommendationHistory: RecommendationHistoryEntry[];
   
   // Camera and UI focus states
   cameraMode: 'free' | 'top' | 'ground' | 'first' | 'icu' | 'patientZero' | 'follow';
@@ -91,6 +103,33 @@ interface SimStore {
   algorithmSteps: Record<string, number>;
   setAlgorithmStep: (algo: string, step: number) => void;
   hasFocusedIcu: boolean;
+
+  // Debugging & Educational states (retained for types only)
+  tickExplanations: string[];
+  disappearedPeople: any[];
+  infectionAttempts: any[];
+  currentEducationalExplanation: string | null;
+  showEducationalOverlay: boolean;
+  stepMode: boolean;
+
+  // Decision support manual actions
+  manuallySetContamination: (roomId: RoomId, contamination: number) => void;
+  manuallyAdjustOccupancy: (roomId: RoomId, delta: number) => void;
+  implementRecommendation: (recId: string) => void;
+  ignoreRecommendation: (recId: string) => void;
+
+  // Custom step actions
+  stepTick: () => void;
+  stepMovement: () => void;
+  stepInfection: () => void;
+  stepAlgorithmStep: () => void;
+  stepCleaning: () => void;
+  stepRecommendation: () => void;
+  assignManualPath: (personId: string, roomId: RoomId) => void;
+  toggleAutomaticSchedule: () => void;
+  toggleStepMode: () => void;
+  toggleEducationalMode: () => void;
+  closeEducationalOverlay: () => void;
 
   populateHospital: () => void;
   setConfig: (partial: Partial<SimulationConfig>) => void;
@@ -138,7 +177,7 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
   riskTrend: 'stable',
   recoveryTrend: 'stable',
   prevRisk: 0,
-  showComparison: true,
+  showComparison: false,
   baselineSnapshots: [],
   baselinePeople: null,
   baselineRooms: null,
@@ -146,6 +185,11 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
   outbreakReport: null,
   activeFloor: 'all',
   mergeSortAnimStep: 0,
+
+  // Decision Support Initial States
+  lastEventLabel: 'Hospital initialized',
+  lastComparison: null,
+  recommendationHistory: [],
 
   // Camera & Stepping Initial States
   cameraMode: 'free',
@@ -155,90 +199,410 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
   setAlgorithmStep: (algo, step) => set((s) => ({ algorithmSteps: { ...s.algorithmSteps, [algo]: step } })),
   hasFocusedIcu: false,
 
+  // Debugging & Educational initial states (deactivated)
+  tickExplanations: [],
+  disappearedPeople: [],
+  infectionAttempts: [],
+  currentEducationalExplanation: null,
+  showEducationalOverlay: false,
+  stepMode: false,
+
+  manuallySetContamination: (roomId, contamination) => {
+    const { rooms, config, logs, minute } = get();
+    const eventLabel = `Contamination in ${ROOM_DEFINITIONS[roomId].name} manually edited to ${Math.round(contamination * 100)}%.`;
+    
+    const updatedRooms = {
+      ...rooms,
+      [roomId]: {
+        ...rooms[roomId],
+        contamination,
+        riskLevel: contamination > 0.6 ? 'critical' as const : contamination > 0.3 ? 'warning' as const : 'safe' as const,
+      },
+    };
+
+    const origin = get().people.find((p) => p.isPatientZero)?.roomId ?? config.startingRoom;
+    const daa = runAllAlgorithms(updatedRooms, config, origin, null, eventLabel);
+
+    set({
+      rooms: updatedRooms,
+      daa,
+      lastEventLabel: eventLabel,
+      logs: addLog(logs, minute, eventLabel, 'warning'),
+    });
+  },
+
+  manuallyAdjustOccupancy: (roomId, delta) => {
+    const { rooms, people, config, logs, minute } = get();
+    const eventLabel = `Occupancy in ${ROOM_DEFINITIONS[roomId].name} manually adjusted (${delta > 0 ? '+1' : '-1'} patient).`;
+    let updatedPeople = [...people];
+
+    if (delta > 0) {
+      const def = ROOM_DEFINITIONS[roomId];
+      const pId = `P${String(people.length + 1).padStart(2, '0')}`;
+      updatedPeople.push({
+        id: pId,
+        role: 'patient',
+        roomId,
+        status: 'healthy',
+        action: 'standing',
+        path: [],
+        pathIndex: 0,
+        walkProgress: 0,
+        position: [
+          def.position[0] + (Math.random() - 0.5) * def.size[0] * 0.4,
+          def.position[1] + 0.5,
+          def.position[2] + (Math.random() - 0.5) * def.size[2] * 0.4,
+        ],
+        visitedRooms: [roomId],
+        schedule: [roomId],
+        scheduleIndex: 0,
+        lastActionMinute: minute,
+        interactions: [],
+        transmissionProb: 0,
+        targetRoomId: null,
+        isPatientZero: false,
+        infectedAtMinute: null,
+        exposedAtMinute: null,
+        animPhase: 0,
+      });
+    } else {
+      const pIdx = updatedPeople.findIndex((p) => p.role === 'patient' && p.roomId === roomId);
+      if (pIdx >= 0) {
+        updatedPeople.splice(pIdx, 1);
+      }
+    }
+
+    const updatedRooms = assignRoomOccupancy(updatedPeople, rooms);
+    const origin = updatedPeople.find((p) => p.isPatientZero)?.roomId ?? config.startingRoom;
+    const daa = runAllAlgorithms(updatedRooms, config, origin, null, eventLabel);
+
+    set({
+      people: updatedPeople,
+      rooms: updatedRooms,
+      daa,
+      lastEventLabel: eventLabel,
+      logs: addLog(logs, minute, eventLabel, 'warning'),
+    });
+  },
+
+  implementRecommendation: (recId) => {
+    const state = get();
+    const rec = state.daa.recommendations.find((r) => r.id === recId);
+    if (!rec) return;
+
+    // Capture before stats
+    const beforeRisk = computeRiskScore(state.rooms, state.people) / 10;
+    const beforeRecovery = Math.round(state.people.filter((p) => p.status === 'healthy').length / Math.max(1, state.people.length) * 100);
+    const beforeHighest = state.daa.heap.root ? ROOM_DEFINITIONS[state.daa.heap.root].name : 'None';
+
+    const eventLabel = `Implemented: ${rec.recommendation}`;
+    let updatedRooms = { ...state.rooms };
+    let updatedPeople = [...state.people];
+    let budgetUsed = state.budgetUsed;
+
+    if (rec.actionType === 'sanitize') {
+      const rId = rec.actionParams.roomId as RoomId;
+      const cost = ROOM_CLEANING_COSTS[rId];
+      if (budgetUsed + cost <= state.config.cleaningBudget) {
+        updatedRooms[rId] = {
+          ...updatedRooms[rId],
+          contamination: Math.max(0, updatedRooms[rId].contamination - 0.5),
+          sanitized: true,
+          lastSanitizedMinute: state.minute,
+          riskLevel: 'safe' as const,
+        };
+        budgetUsed += cost;
+      }
+    } else if (rec.actionType === 'lock') {
+      const rId = rec.actionParams.roomId as RoomId;
+      updatedRooms[rId] = { ...updatedRooms[rId], locked: true, riskLevel: 'locked' as const };
+    } else if (rec.actionType === 'close_corridor') {
+      const from = rec.actionParams.from as RoomId;
+      const to = rec.actionParams.to as RoomId;
+      updatedRooms[from] = {
+        ...updatedRooms[from],
+        corridorClosed: { ...updatedRooms[from].corridorClosed, [to]: true },
+      };
+      updatedRooms[to] = {
+        ...updatedRooms[to],
+        corridorClosed: { ...updatedRooms[to].corridorClosed, [from]: true },
+      };
+    } else if (rec.actionType === 'increase_budget') {
+      set((s) => ({ config: { ...s.config, cleaningBudget: s.config.cleaningBudget + rec.actionParams.budgetIncrement } }));
+    }
+
+    const origin = updatedPeople.find((p) => p.isPatientZero)?.roomId ?? state.config.startingRoom;
+    const daa = runAllAlgorithms(updatedRooms, state.config, origin, null, eventLabel);
+
+    // Capture after stats
+    const afterRisk = computeRiskScore(updatedRooms, updatedPeople) / 10;
+    const afterRecovery = Math.round(updatedPeople.filter((p) => p.status === 'healthy').length / Math.max(1, updatedPeople.length) * 100);
+    const afterHighest = daa.heap.root ? ROOM_DEFINITIONS[daa.heap.root].name : 'None';
+
+    const lastComparison: RiskComparison = {
+      before: { risk: beforeRisk, recovery: beforeRecovery, highestRiskRoom: beforeHighest },
+      after: { risk: afterRisk, recovery: afterRecovery, highestRiskRoom: afterHighest },
+      actionLabel: `Implemented recommendation: ${rec.recommendation}`,
+    };
+
+    const newHistoryEntry: RecommendationHistoryEntry = {
+      timeLabel: formatSimTime(state.minute),
+      trigger: rec.triggeredBy,
+      recommendation: rec.recommendation,
+      action: 'Implemented',
+    };
+
+    set({
+      rooms: updatedRooms,
+      people: updatedPeople,
+      budgetUsed,
+      daa,
+      lastComparison,
+      lastEventLabel: eventLabel,
+      recommendationHistory: [...state.recommendationHistory, newHistoryEntry],
+      logs: addLog(state.logs, state.minute, `Recommendation Implemented: ${rec.recommendation}`, 'success'),
+    });
+  },
+
+  ignoreRecommendation: (recId) => {
+    const state = get();
+    const rec = state.daa.recommendations.find((r) => r.id === recId);
+    if (!rec) return;
+
+    // Capture before stats
+    const beforeRisk = computeRiskScore(state.rooms, state.people) / 10;
+    const beforeRecovery = Math.round(state.people.filter((p) => p.status === 'healthy').length / Math.max(1, state.people.length) * 100);
+    const beforeHighest = state.daa.heap.root ? ROOM_DEFINITIONS[state.daa.heap.root].name : 'None';
+
+    const eventLabel = `Ignored: ${rec.recommendation}`;
+    let updatedRooms = { ...state.rooms };
+    let updatedPeople = [...state.people];
+
+    // Consequence: Contamination spikes in the affected rooms due to inaction
+    if (rec.affectedRooms.length > 0) {
+      rec.affectedRooms.forEach((rName) => {
+        const rId = ROOM_IDS.find((id) => ROOM_DEFINITIONS[id].name === rName || id === rName);
+        if (rId) {
+          updatedRooms[rId] = {
+            ...updatedRooms[rId],
+            contamination: Math.min(1, updatedRooms[rId].contamination + 0.25),
+          };
+        }
+      });
+    }
+
+    const origin = updatedPeople.find((p) => p.isPatientZero)?.roomId ?? state.config.startingRoom;
+    const daa = runAllAlgorithms(updatedRooms, state.config, origin, null, eventLabel);
+
+    // Capture after stats
+    const afterRisk = computeRiskScore(updatedRooms, updatedPeople) / 10;
+    const afterRecovery = Math.round(updatedPeople.filter((p) => p.status === 'healthy').length / Math.max(1, updatedPeople.length) * 100);
+    const afterHighest = daa.heap.root ? ROOM_DEFINITIONS[daa.heap.root].name : 'None';
+
+    const lastComparison: RiskComparison = {
+      before: { risk: beforeRisk, recovery: beforeRecovery, highestRiskRoom: beforeHighest },
+      after: { risk: afterRisk, recovery: afterRecovery, highestRiskRoom: afterHighest },
+      actionLabel: `Ignored: ${rec.recommendation} (Pathogen levels spiked)`,
+    };
+
+    const newHistoryEntry: RecommendationHistoryEntry = {
+      timeLabel: formatSimTime(state.minute),
+      trigger: rec.triggeredBy,
+      recommendation: rec.recommendation,
+      action: 'Ignored',
+    };
+
+    set({
+      rooms: updatedRooms,
+      people: updatedPeople,
+      daa,
+      lastComparison,
+      lastEventLabel: eventLabel,
+      recommendationHistory: [...state.recommendationHistory, newHistoryEntry],
+      logs: addLog(state.logs, state.minute, `Recommendation Ignored. Outbreak risk increased in ignored wards.`, 'danger'),
+    });
+  },
+
+  stepTick: () => {
+    // Manually advances 5 minutes
+    set((s) => {
+      const newMin = s.minute + 5;
+      const eventLabel = `Manual clock tick (+5m).`;
+      const rooms = assignRoomOccupancy(s.people, s.rooms);
+      const tx = runTransmissionStep(s.people, rooms, s.config, newMin);
+      const origin = s.people.find((p) => p.isPatientZero)?.roomId ?? s.config.startingRoom;
+      const daa = runAllAlgorithms(tx.rooms, s.config, origin, null, eventLabel);
+
+      let logs = s.logs;
+      tx.events.forEach((ev) => {
+        logs = addLog(logs, newMin, `Infection spread: ${ev.fromId} exposed ${ev.toId} in ${ROOM_DEFINITIONS[ev.fromRoom].name}.`, 'danger');
+      });
+
+      return {
+        minute: newMin,
+        timelineHour: newMin / 60,
+        people: tx.people,
+        rooms: tx.rooms,
+        daa,
+        lastEventLabel: eventLabel,
+        logs,
+      };
+    });
+  },
+
+  stepMovement: () => {},
+  stepInfection: () => {},
+  stepAlgorithmStep: () => {},
+  stepCleaning: () => {},
+  stepRecommendation: () => {},
+
+  assignManualPath: (personId, roomId) => {
+    const { people, rooms, config, minute } = get();
+    const person = people.find((p) => p.id === personId);
+    if (!person) return;
+
+    const eventLabel = `${personId} (${person.role}) directed to move to ${ROOM_DEFINITIONS[roomId].name}.`;
+    const adjacency = buildAdjacency(rooms);
+    const edges = buildGraphEdges(rooms, config, 1);
+    const locked = new Set(ROOM_IDS.filter((id) => rooms[id].locked));
+    const path = dijkstraPath(person.roomId, roomId, edges, adjacency, locked);
+
+    if (path.length > 1) {
+      const updatedPeople = people.map((p) =>
+        p.id === personId
+          ? {
+              ...p,
+              path,
+              pathIndex: 0,
+              walkProgress: 0,
+              targetRoomId: roomId,
+              action: 'walking' as const,
+              lastActionMinute: Math.floor(minute),
+              waitingReason: '',
+            }
+          : p
+      );
+      set({
+        people: updatedPeople,
+        lastEventLabel: eventLabel,
+        logs: addLog(get().logs, Math.floor(minute), eventLabel, 'info')
+      });
+    }
+  },
+
+  toggleAutomaticSchedule: () => {},
+  toggleStepMode: () => {},
+  toggleEducationalMode: () => {},
+  closeEducationalOverlay: () => set({ showEducationalOverlay: false }),
+
   populateHospital: () => {
     const { config } = get();
     const people = createPopulation(config);
-  // Ensure starting room has patients for Patient Zero selection
-  const patients = people.filter((p) => p.role === 'patient');
-  const inStarting = patients.filter((p) => p.roomId === config.startingRoom);
-  if (inStarting.length === 0 && patients.length > 0) {
-    const def = ROOM_DEFINITIONS[config.startingRoom];
-    for (let i = 0; i < Math.min(5, patients.length); i++) {
-      patients[i].roomId = config.startingRoom;
-      patients[i].position = [
-        def.position[0] + (Math.random() - 0.5) * def.size[0] * 0.5,
-        def.position[1] + 0.5,
-        def.position[2] + (Math.random() - 0.5) * def.size[2] * 0.5,
-      ];
-      patients[i].visitedRooms = [config.startingRoom];
+    
+    // Position Patient Zero or other patients in default room
+    const patients = people.filter((p) => p.role === 'patient');
+    if (patients.length > 0) {
+      const def = ROOM_DEFINITIONS[config.startingRoom];
+      for (let i = 0; i < Math.min(5, patients.length); i++) {
+        patients[i].roomId = config.startingRoom;
+        patients[i].position = [
+          def.position[0] + (Math.random() - 0.5) * def.size[0] * 0.4,
+          def.position[1] + 0.5,
+          def.position[2] + (Math.random() - 0.5) * def.size[2] * 0.4,
+        ];
+        patients[i].visitedRooms = [config.startingRoom];
+      }
     }
-  }
+
     let rooms = initializeRooms();
-    if (config.isolationWardOpen) {
-      rooms['isolation-ward'] = { ...rooms['isolation-ward'], locked: false };
-    }
     rooms = assignRoomOccupancy(people, rooms);
-    const daa = runAllAlgorithms(rooms, config, config.startingRoom, null);
+    const daa = runAllAlgorithms(rooms, config, config.startingRoom, null, 'Hospital initialization');
+    daa.recommendations = [];
+
     set({
       people,
       rooms,
       daa,
-      logs: addLog([], 0, `Hospital populated: ${config.numPatients} patients, ${config.numDoctors} doctors, ${config.numNurses} nurses.`),
+      logs: addLog([], 0, `Hospital populated: ${config.numPatients} patients. Ready for manual configuration.`),
       minute: 0,
       status: 'idle',
       transmissionEvents: [],
       snapshots: [],
       interventions: [],
       budgetUsed: 0,
+      tickExplanations: [],
+      disappearedPeople: [],
+      infectionAttempts: [],
+      lastEventLabel: '',
+      lastComparison: null,
+      recommendationHistory: [],
     });
   },
 
   setConfig: (partial) => {
+    const eventLabel = `Disease study changed to ${partial.caseStudy?.toUpperCase() || ''}.`;
     set((s) => ({ config: { ...s.config, ...partial } }));
-    get().recalculateAll();
+    
+    const { rooms, config, people } = get();
+    const origin = people.find((p) => p.isPatientZero)?.roomId ?? config.startingRoom;
+    set({
+      daa: runAllAlgorithms(rooms, config, origin, null, eventLabel),
+      mergeSortAnimStep: 0,
+      lastEventLabel: eventLabel,
+    });
   },
 
   setStartingRoom: (roomId) => {
+    const eventLabel = `Starting room changed to ${ROOM_DEFINITIONS[roomId].name}.`;
     set((s) => ({
       config: { ...s.config, startingRoom: roomId, patientZeroId: null },
       selectedRoomId: roomId,
       people: s.people.map((p) => ({ ...p, isPatientZero: false })),
     }));
     get().populateHospital();
-    get().recalculateAll();
+    
+    const { rooms, config, people } = get();
+    const origin = people.find((p) => p.isPatientZero)?.roomId ?? config.startingRoom;
+    set({
+      daa: runAllAlgorithms(rooms, config, origin, null, eventLabel),
+      mergeSortAnimStep: 0,
+      lastEventLabel: eventLabel,
+    });
   },
 
   setPatientZero: (id) => {
+    const eventLabel = `Patient Zero set to ${id}.`;
     set((s) => ({
       config: { ...s.config, patientZeroId: id },
       people: s.people.map((p) => ({ ...p, isPatientZero: p.id === id })),
-      logs: addLog(s.logs, s.minute, `Patient Zero selected: ${id}`, 'warning'),
+      logs: addLog(s.logs, s.minute, `Selected Patient Zero: ${id}`, 'warning'),
       cameraMode: 'patientZero',
       followedPersonId: id,
+      lastEventLabel: eventLabel,
     }));
   },
 
   startOutbreak: () => {
     const { config, people, rooms, logs } = get();
     if (!config.patientZeroId) {
-      set({ logs: addLog(logs, 0, 'Select Patient Zero before starting outbreak.', 'danger') });
+      set({ logs: addLog(logs, 0, 'Select Patient Zero to begin.', 'danger') });
       return;
     }
     const disease = CASE_STUDIES[config.caseStudy];
     const result = infectPatientZero(people, config.patientZeroId, rooms);
     const pz = result.people.find((p) => p.id === config.patientZeroId);
     const origin = pz?.roomId ?? config.startingRoom;
-    const daa = runAllAlgorithms(result.rooms, config, origin, null);
+    const eventLabel = `Outbreak started with Patient Zero ${config.patientZeroId} in ${ROOM_DEFINITIONS[origin].name}.`;
+    const daa = runAllAlgorithms(result.rooms, config, origin, null, eventLabel);
+
     set({
       people: result.people,
       rooms: result.rooms,
       status: 'running',
       daa,
-      baselinePeople: structuredClone(result.people),
-      baselineRooms: structuredClone(result.rooms),
-      baselineSnapshots: [],
-      logs: addLog(addLog(logs, 0, `${disease.shortName} outbreak initiated — Patient Zero: ${config.patientZeroId}.`, 'danger'), 0, 'BFS predicts next infection wave from origin room.', 'algorithm'),
-      timeline: addTimeline([], 0, `${disease.shortName} detected — Patient ${config.patientZeroId} in ${ROOM_DEFINITIONS[origin].name}`),
+      lastEventLabel: eventLabel,
+      logs: addLog(logs, 0, `Manual demonstration started. Patient Zero ${config.patientZeroId} infected with ${disease.shortName} in ${ROOM_DEFINITIONS[origin].name}.`, 'danger'),
+      timeline: addTimeline([], 0, `Outbreak started: ${config.patientZeroId} in ${ROOM_DEFINITIONS[origin].name}`),
       snapshots: [],
       cameraMode: 'patientZero',
       followedPersonId: config.patientZeroId,
@@ -246,8 +610,8 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
     });
   },
 
-  pause: () => set({ status: 'paused' }),
-  resume: () => set({ status: 'running' }),
+  pause: () => {},
+  resume: () => {},
 
   reset: () => {
     set({
@@ -275,235 +639,176 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
       followedPersonId: null,
       algorithmSteps: { bfs: 0, dijkstra: 0, floydWarshall: 0, heap: 0, mergeSort: 0, knapsack: 0 },
       hasFocusedIcu: false,
+      tickExplanations: [],
+      disappearedPeople: [],
+      infectionAttempts: [],
+      currentEducationalExplanation: null,
+      showEducationalOverlay: false,
+      stepMode: false,
+      lastEventLabel: 'Hospital initialized',
+      lastComparison: null,
+      recommendationHistory: [],
     });
     get().populateHospital();
   },
 
-  replay: () => {
-    const { snapshots } = get();
-    if (!snapshots.length) return;
-    const first = snapshots[0];
-    set({
-      minute: first.minute,
-      rooms: first.rooms,
-      people: first.people,
-      logs: first.logs,
-      transmissionEvents: first.transmissionEvents,
-      daa: first.daa,
-      status: 'paused',
-    });
-  },
+  replay: () => {},
 
   tick: (delta) => {
     const state = get();
     if (state.status !== 'running') return;
 
-    const speed = state.config.simulationSpeed;
-    const newMinute = state.minute + delta * speed;
-
     let people = updateMovement(state.people, state.rooms, state.config, state.minute, delta);
     let rooms = assignRoomOccupancy(people, state.rooms);
-    const tx = runTransmissionStep(people, rooms, state.config, Math.floor(newMinute));
-    people = tx.people;
-    rooms = assignRoomOccupancy(tx.people, tx.rooms);
 
-    const risk = computeRiskScore(rooms, people);
-    const recovery = computeRecovery(rooms, people);
-    const origin = state.people.find((p) => p.isPatientZero)?.roomId ?? state.config.startingRoom;
-    const daa = runAllAlgorithms(rooms, state.config, origin, null);
-
+    let minute = state.minute;
     let logs = state.logs;
     let timeline = state.timeline;
-    const minInt = Math.floor(newMinute);
+    let transmissionEvents = state.transmissionEvents;
+    let daa = state.daa;
 
-    const infectedCount = people.filter((p) => p.status === 'infected').length;
-    const roomsInfected = ROOM_IDS.filter((id) => rooms[id].contamination > 0.3).length;
+    let recalculate = false;
+    let eventLabel = state.lastEventLabel;
 
-    let status: OutbreakStatus = state.status;
-    const hadInfected = state.people.some((p) => p.status === 'infected');
-    if (hadInfected && infectedCount === 0 && minInt > 30) status = 'contained';
-    if (recovery >= 85 && infectedCount <= 1 && minInt > 60) status = 'contained';
-    if (minInt >= 1440) status = 'ended';
+    people = people.map((p) => {
+      const prev = state.people.find((x) => x.id === p.id);
+      if (!prev) return p;
 
-    let cameraMode = state.cameraMode;
-    let hasFocusedIcu = state.hasFocusedIcu;
-
-    if (rooms.icu.contamination > 0.3 && !hasFocusedIcu) {
-      hasFocusedIcu = true;
-      cameraMode = 'icu';
-      logs = addLog(logs, minInt, `WARNING: ICU contamination increased. Camera auto-focused on ICU.`, 'warning');
-    }
-
-    if (minInt > Math.floor(state.minute) && minInt % 5 === 0 && daa.bfs.nextPredicted) {
-      const rn = ROOM_DEFINITIONS[daa.bfs.nextPredicted].name;
-      logs = addLog(logs, minInt, `BFS predicts ${rn} at risk.`, 'algorithm');
-      timeline = addTimeline(timeline, minInt, `BFS predicted ${rn} — next propagation level`);
-    }
-    if (minInt > Math.floor(state.minute) && minInt % 8 === 0 && daa.heap.root) {
-      timeline = addTimeline(timeline, minInt, `${ROOM_DEFINITIONS[daa.heap.root].name} becomes highest risk (Heap)`);
-    }
-    if (tx.events.length) {
-      const ev = tx.events[0];
-      logs = addLog(logs, minInt, `Transmission: ${ev.fromId} → ${ev.toId} in ${ROOM_DEFINITIONS[ev.fromRoom].name}.`, 'danger');
-      timeline = addTimeline(timeline, minInt, `${ev.fromId} transmitted to ${ev.toId} in ${ROOM_DEFINITIONS[ev.fromRoom].name}`);
-    }
-    if (status === 'contained' && state.status === 'running') {
-      timeline = addTimeline(timeline, minInt, 'Outbreak contained — hospital recovery increasing');
-      cameraMode = 'top';
-    }
-
-    const snapshot: SimulationSnapshot = {
-      minute: minInt,
-      rooms,
-      people,
-      logs,
-      transmissionEvents: [...state.transmissionEvents, ...tx.events],
-      daa,
-      roomsInfected,
-      patientsInfected: infectedCount,
-      riskScore: risk,
-      recoveryPercent: recovery,
-      budgetRemaining: state.config.cleaningBudget - state.budgetUsed,
-      budgetUsed: state.budgetUsed,
-      interventions: state.interventions,
-    };
-
-    let nextBaselinePeople = state.baselinePeople;
-    let nextBaselineRooms = state.baselineRooms;
-    const baselineSnapshots = [...state.baselineSnapshots];
-    if (state.baselinePeople && state.baselineRooms) {
-      let bPeople = updateMovement(state.baselinePeople, state.baselineRooms, { ...state.config, cleaningTeams: 0 }, state.minute, delta);
-      let bRooms = assignRoomOccupancy(bPeople, state.baselineRooms);
-      const bTx = runTransmissionStep(bPeople, bRooms, { ...state.config, cleaningTeams: 0, cleaningFrequency: 999 }, minInt);
-      bPeople = bTx.people;
-      bRooms = assignRoomOccupancy(bTx.people, bTx.rooms);
-      nextBaselinePeople = bPeople;
-      nextBaselineRooms = bRooms;
-      if (baselineSnapshots.length < 500) {
-        baselineSnapshots.push({
-          ...snapshot,
-          people: bPeople,
-          rooms: bRooms,
-          patientsInfected: bPeople.filter((p) => p.status === 'infected').length,
-          roomsInfected: ROOM_IDS.filter((id) => bRooms[id].contamination > 0.3).length,
-          budgetUsed: 0,
-          interventions: [],
-        });
+      // Detect arrival
+      if (prev.action === 'walking' && p.action === 'standing') {
+        recalculate = true;
+        minute += 5; // discrete 5-minute ticks on arrivals!
+        const toName = ROOM_DEFINITIONS[p.roomId].name;
+        eventLabel = `${p.id} (${p.role}) arrived at ${toName}.`;
+        logs = addLog(logs, Math.floor(minute), eventLabel, 'info');
+        timeline = addTimeline(timeline, Math.floor(minute), `${p.id} moved to ${toName}`);
       }
-    } else if (baselineSnapshots.length < 500) {
-      baselineSnapshots.push({ ...snapshot });
-    }
+      return p;
+    });
 
-    if (status === 'ended' && !state.showReport) get().exportReport();
+    if (recalculate) {
+      rooms = assignRoomOccupancy(people, rooms);
+      const tx = runTransmissionStep(people, rooms, state.config, Math.floor(minute));
+      people = tx.people;
+      rooms = assignRoomOccupancy(people, tx.rooms);
+      transmissionEvents = [...state.transmissionEvents, ...tx.events].slice(-50);
+
+      tx.events.forEach((ev) => {
+        logs = addLog(logs, Math.floor(minute), `${ev.toId} exposed to pathogens in ${ROOM_DEFINITIONS[ev.fromRoom].name}.`, 'danger');
+        timeline = addTimeline(timeline, Math.floor(minute), `${ev.toId} infected in ${ROOM_DEFINITIONS[ev.fromRoom].name}`);
+      });
+
+      const origin = people.find((p) => p.isPatientZero)?.roomId ?? state.config.startingRoom;
+      daa = runAllAlgorithms(rooms, state.config, origin, null, eventLabel);
+    }
 
     set({
-      minute: newMinute,
-      timelineHour: newMinute / 60,
+      minute,
+      timelineHour: minute / 60,
       people,
       rooms,
       daa,
       logs,
       timeline,
-      transmissionEvents: [...state.transmissionEvents, ...tx.events].slice(-50),
-      snapshots: [...state.snapshots, snapshot].slice(-500),
-      baselineSnapshots,
-      baselinePeople: nextBaselinePeople,
-      baselineRooms: nextBaselineRooms,
-      prevRisk: risk,
-      riskTrend: risk > state.prevRisk + 2 ? 'increasing' : risk < state.prevRisk - 2 ? 'decreasing' : 'stable',
-      recoveryTrend: recovery > computeRecovery(state.rooms, state.people) ? 'increasing' : 'stable',
-      status,
-      mergeSortAnimStep: (state.mergeSortAnimStep + 1) % Math.max(1, daa.mergeSort.steps.length),
-      cameraMode,
-      hasFocusedIcu,
+      transmissionEvents,
+      lastEventLabel: eventLabel,
     });
   },
 
   seekTimeline: (hour) => {
-    const { snapshots } = get();
-    const targetMinute = hour * 60;
-    const snap = [...snapshots].reverse().find((s) => s.minute <= targetMinute);
-    if (snap) {
-      set({
-        minute: snap.minute,
-        timelineHour: hour,
-        rooms: snap.rooms,
-        people: snap.people,
-        logs: snap.logs,
-        daa: snap.daa,
-        transmissionEvents: snap.transmissionEvents,
-        status: 'paused',
-      });
-    } else {
-      set({ timelineHour: hour });
-    }
+    set({ timelineHour: hour, minute: hour * 60 });
   },
 
   recalculateAll: () => {
     const { rooms, config, people } = get();
     const origin = people.find((p) => p.isPatientZero)?.roomId ?? config.startingRoom;
-    set({ daa: runAllAlgorithms(rooms, config, origin, null), mergeSortAnimStep: 0 });
+    set({ daa: runAllAlgorithms(rooms, config, origin, null, 'DAA Recalculate Request'), mergeSortAnimStep: 0 });
   },
 
   sanitizeRoom: (roomId) => {
     const { rooms, config, logs, minute, budgetUsed, interventions } = get();
     const cost = ROOM_CLEANING_COSTS[roomId];
     if (budgetUsed + cost > config.cleaningBudget) {
-      set({ logs: addLog(logs, minute, `Insufficient budget to sanitize ${ROOM_DEFINITIONS[roomId].name}.`, 'danger') });
+      set({ logs: addLog(logs, minute, `Budget limit reached: Cannot sanitize ${ROOM_DEFINITIONS[roomId].name}.`, 'danger') });
       return;
     }
-    set({
-      rooms: {
-        ...rooms,
-        [roomId]: {
-          ...rooms[roomId],
-          contamination: Math.max(0, rooms[roomId].contamination - 0.4),
-          sanitized: true,
-          lastSanitizedMinute: minute,
-          riskLevel: 'safe',
-        },
+    const eventLabel = `${ROOM_DEFINITIONS[roomId].name} sanitized manually.`;
+    const newContam = Math.max(0, rooms[roomId].contamination - 0.5);
+    const updatedRooms = {
+      ...rooms,
+      [roomId]: {
+        ...rooms[roomId],
+        contamination: newContam,
+        sanitized: true,
+        lastSanitizedMinute: minute,
+        riskLevel: 'safe' as const,
       },
+    };
+
+    const origin = get().people.find((p) => p.isPatientZero)?.roomId ?? config.startingRoom;
+    const daa = runAllAlgorithms(updatedRooms, config, origin, null, eventLabel);
+
+    set({
+      rooms: updatedRooms,
+      daa,
       budgetUsed: budgetUsed + cost,
       interventions: [...interventions, `Sanitized ${ROOM_DEFINITIONS[roomId].name}`],
-      logs: addLog(logs, minute, `Cleaning completed in ${ROOM_DEFINITIONS[roomId].name}.`, 'success'),
+      lastEventLabel: eventLabel,
+      logs: addLog(logs, minute, `${ROOM_DEFINITIONS[roomId].name} sanitized. Contamination reduced.`, 'success'),
       timeline: addTimeline(get().timeline, minute, `${ROOM_DEFINITIONS[roomId].name} sanitized — risk decreased`),
-      cameraMode: 'free',
       selectedRoomId: roomId,
     });
-    get().recalculateAll();
   },
 
   lockRoom: (roomId) => {
-    const { rooms, logs, minute, interventions } = get();
+    const { rooms, logs, minute, interventions, config } = get();
+    const eventLabel = `${ROOM_DEFINITIONS[roomId].name} locked manually.`;
+    const updatedRooms = { ...rooms, [roomId]: { ...rooms[roomId], locked: true, riskLevel: 'locked' as const } };
+    const origin = get().people.find((p) => p.isPatientZero)?.roomId ?? config.startingRoom;
+    const daa = runAllAlgorithms(updatedRooms, config, origin, null, eventLabel);
+
     set({
-      rooms: { ...rooms, [roomId]: { ...rooms[roomId], locked: true, riskLevel: 'locked' } },
+      rooms: updatedRooms,
+      daa,
       interventions: [...interventions, `Locked ${ROOM_DEFINITIONS[roomId].name}`],
+      lastEventLabel: eventLabel,
       logs: addLog(logs, minute, `${ROOM_DEFINITIONS[roomId].name} locked.`, 'warning'),
     });
-    get().recalculateAll();
   },
 
   unlockRoom: (roomId) => {
-    const { rooms, logs, minute } = get();
+    const { rooms, logs, minute, config } = get();
+    const eventLabel = `${ROOM_DEFINITIONS[roomId].name} unlocked manually.`;
+    const updatedRooms = { ...rooms, [roomId]: { ...rooms[roomId], locked: false, riskLevel: 'safe' as const } };
+    const origin = get().people.find((p) => p.isPatientZero)?.roomId ?? config.startingRoom;
+    const daa = runAllAlgorithms(updatedRooms, config, origin, null, eventLabel);
+
     set({
-      rooms: { ...rooms, [roomId]: { ...rooms[roomId], locked: false, riskLevel: 'safe' } },
+      rooms: updatedRooms,
+      daa,
+      lastEventLabel: eventLabel,
       logs: addLog(logs, minute, `${ROOM_DEFINITIONS[roomId].name} unlocked.`, 'info'),
     });
-    get().recalculateAll();
   },
 
   toggleCorridor: (from, to) => {
-    const { rooms, logs, minute } = get();
+    const { rooms, logs, minute, config } = get();
     const closed = !rooms[from].corridorClosed[to];
+    const eventLabel = `Corridor ${ROOM_DEFINITIONS[from].name} ↔ ${ROOM_DEFINITIONS[to].name} ${closed ? 'closed' : 'opened'}.`;
+    const updatedRooms = {
+      ...rooms,
+      [from]: { ...rooms[from], corridorClosed: { ...rooms[from].corridorClosed, [to]: closed } },
+      [to]: { ...rooms[to], corridorClosed: { ...rooms[to].corridorClosed, [from]: closed } },
+    };
+    const origin = get().people.find((p) => p.isPatientZero)?.roomId ?? config.startingRoom;
+    const daa = runAllAlgorithms(updatedRooms, config, origin, null, eventLabel);
+
     set({
-      rooms: {
-        ...rooms,
-        [from]: { ...rooms[from], corridorClosed: { ...rooms[from].corridorClosed, [to]: closed } },
-        [to]: { ...rooms[to], corridorClosed: { ...rooms[to].corridorClosed, [from]: closed } },
-      },
-      logs: addLog(logs, minute, `Corridor ${ROOM_DEFINITIONS[from].name} ↔ ${ROOM_DEFINITIONS[to].name} ${closed ? 'closed' : 'opened'}.`, 'warning'),
+      rooms: updatedRooms,
+      daa,
+      lastEventLabel: eventLabel,
+      logs: addLog(logs, minute, eventLabel, 'warning'),
     });
-    get().recalculateAll();
   },
 
   adjustParam: (key, delta) => {
@@ -511,12 +816,18 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
     const numericKeys = ['numPatients', 'numDoctors', 'numNurses', 'numVisitors', 'numCleaningStaff', 'crowdDensity', 'cleaningFrequency', 'simulationSpeed', 'diseaseSpreadSpeed', 'cleaningBudget', 'cleaningTeams'] as const;
     if (numericKeys.includes(key as (typeof numericKeys)[number])) {
       const cur = config[key as (typeof numericKeys)[number]] as number;
-      get().setConfig({ [key]: Math.max(0, cur + delta) });
+      const newVal = Math.max(0, cur + delta);
+      const eventLabel = `${key} parameter adjusted to ${newVal}.`;
+
+      set((s) => ({ config: { ...s.config, [key]: newVal }, lastEventLabel: eventLabel }));
+      
       if (['numPatients', 'numDoctors', 'numNurses', 'numVisitors', 'numCleaningStaff'].includes(key)) {
         get().populateHospital();
+      } else {
+        const { rooms, config: newConfig, people } = get();
+        const origin = people.find((p) => p.isPatientZero)?.roomId ?? newConfig.startingRoom;
+        set({ daa: runAllAlgorithms(rooms, newConfig, origin, null, eventLabel) });
       }
-    } else if (key === 'restrictPatientMovement' || key === 'restrictStaffMovement' || key === 'isolationWardOpen') {
-      get().setConfig({ [key]: delta > 0 });
     }
   },
 
@@ -524,8 +835,6 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
   selectPerson: (personId) => set({ selectedPersonId: personId, selectedRoomId: null }),
 
   runWhatIf: (scenario) => {
-    const { logs, minute } = get();
-    set({ logs: addLog(logs, minute, `What-if: ${scenario}`, 'algorithm') });
     switch (scenario) {
       case 'sanitize-icu': get().sanitizeRoom('icu'); break;
       case 'close-laboratory': get().lockRoom('laboratory'); break;
@@ -535,7 +844,6 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
       case 'more-visitors': get().adjustParam('numVisitors', 5); get().populateHospital(); break;
       default: break;
     }
-    get().recalculateAll();
   },
 
   closeReport: () => set({ showReport: false }),
@@ -567,9 +875,9 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
         finalRiskPercent: computeRiskScore(rooms, people) / 100,
         cleaningCost: budgetUsed,
         lessonsLearned: [
-          'Early sanitization of predicted rooms reduces secondary transmission.',
-          'Corridor management changes shortest transmission paths.',
-          'Knapsack maximizes risk reduction per rupee spent.',
+          'Manual character movement models pathogen vectors directly.',
+          'Interventions instantly trigger shortest-path DAA updates.',
+          'Knapsack allocation operates statically within specified limits.',
         ],
         recommendations: daa.recommendations.map((r) => r.recommendation),
       },
@@ -578,44 +886,22 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
   },
 
   getComparison: () => {
-    const { snapshots, baselineSnapshots, daa, config, budgetUsed } = get();
-    const cur = snapshots[snapshots.length - 1];
-    const base = baselineSnapshots[baselineSnapshots.length - 1];
-    const patientCount = cur?.people.filter((p) => p.role === 'patient').length ?? config.numPatients;
     const current = {
-      roomsInfected: cur?.roomsInfected ?? 0,
-      patientsInfected: cur?.patientsInfected ?? 0,
-      infectionPercent: cur ? (cur.patientsInfected / Math.max(1, patientCount)) * 100 : 0,
-      recoveryPercent: cur?.recoveryPercent ?? 0,
-      avgTransmissionCost: daa.dijkstra.cost,
-      budgetUsed: cur?.budgetUsed ?? budgetUsed,
-      containmentTime: cur?.minute ?? null,
-      peakInfectionMinute: cur?.minute ?? null,
-      highestRiskRoom: daa.heap.root,
-      transmissionRoute: daa.dijkstra.path,
-    };
-    const basePatients = base?.people.filter((p) => p.role === 'patient').length ?? patientCount;
-    const baseline = {
-      roomsInfected: base?.roomsInfected ?? 0,
-      patientsInfected: base?.patientsInfected ?? 0,
-      infectionPercent: base ? (base.patientsInfected / Math.max(1, basePatients)) * 100 : 0,
-      recoveryPercent: base?.recoveryPercent ?? 0,
-      avgTransmissionCost: daa.dijkstra.cost * 1.2,
+      roomsInfected: 0,
+      patientsInfected: 0,
+      infectionPercent: 0,
+      recoveryPercent: 0,
+      avgTransmissionCost: 0,
       budgetUsed: 0,
-      containmentTime: base?.minute ?? null,
-      peakInfectionMinute: base?.minute ?? null,
-      highestRiskRoom: daa.heap.root,
-      transmissionRoute: daa.dijkstra.path,
+      containmentTime: null,
+      peakInfectionMinute: null,
+      highestRiskRoom: null,
+      transmissionRoute: [],
     };
     return {
-      baseline,
+      baseline: current,
       current,
-      improvements: {
-        roomsSaved: Math.max(0, baseline.roomsInfected - current.roomsInfected),
-        riskReduced: Math.max(0, baseline.infectionPercent - current.infectionPercent),
-        containmentTimeImproved: baseline.containmentTime && current.containmentTime ? (baseline.containmentTime - current.containmentTime) / 60 : 0,
-        cleaningCostSaved: Math.max(0, (baseline.roomsInfected - current.roomsInfected) * 3000),
-      },
+      improvements: { roomsSaved: 0, riskReduced: 0, containmentTimeImproved: 0, cleaningCostSaved: 0 },
     };
   },
 

@@ -3,90 +3,7 @@ import { useSimulationStore } from '../../store/simulationStore';
 import { CASE_STUDIES, ROOM_DEFINITIONS } from '../../data/hospitalData';
 import { ROOM_IDS } from '../../types';
 import type { CaseStudyId, RoomId } from '../../types';
-import { Play, Pause, RotateCcw, SkipForward, Users } from 'lucide-react';
-
-export function SimulationPlaybackControls() {
-  const config = useSimulationStore((s) => s.config);
-  const status = useSimulationStore((s) => s.status);
-  const timelineHour = useSimulationStore((s) => s.timelineHour);
-  const setConfig = useSimulationStore((s) => s.setConfig);
-  const startOutbreak = useSimulationStore((s) => s.startOutbreak);
-  const pause = useSimulationStore((s) => s.pause);
-  const resume = useSimulationStore((s) => s.resume);
-  const reset = useSimulationStore((s) => s.reset);
-  const replay = useSimulationStore((s) => s.replay);
-  const seekTimeline = useSimulationStore((s) => s.seekTimeline);
-
-  return (
-    <div className="space-y-3 text-xs text-slate-300">
-      {/* Timeline slider */}
-      <div className="bg-slate-900/40 p-2.5 rounded-lg border border-slate-800/80">
-        <div className="flex justify-between text-[10px] text-slate-400 mb-1">
-          <span>0h</span>
-          <span className="text-cyan-400 font-mono font-bold">Time: {timelineHour.toFixed(1)}h</span>
-          <span>24h</span>
-        </div>
-        <input
-          type="range" min={0} max={24} step={0.1} value={timelineHour}
-          className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer"
-          onChange={(e) => seekTimeline(Number(e.target.value))}
-        />
-      </div>
-
-      {/* Playback action buttons */}
-      <div className="flex flex-wrap gap-1.5 justify-center py-1">
-        <button
-          className="px-3 py-1.5 rounded bg-emerald-600 text-white hover:bg-emerald-500 font-bold flex items-center gap-1.5 transition-all text-[11px]"
-          onClick={startOutbreak}
-          disabled={status === 'running'}
-        >
-          <Play className="w-3.5 h-3.5" /> Start Outbreak
-        </button>
-        <button
-          className="p-1.5 rounded bg-yellow-600 hover:bg-yellow-500 text-white transition-all"
-          onClick={status === 'running' ? pause : resume}
-          title={status === 'running' ? 'Pause' : 'Resume'}
-        >
-          <Pause className="w-3.5 h-3.5" />
-        </button>
-        <button
-          className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 transition-all"
-          onClick={replay}
-          title="Replay"
-        >
-          <SkipForward className="w-3.5 h-3.5" />
-        </button>
-        <button
-          className="p-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 transition-all"
-          onClick={reset}
-          title="Reset"
-        >
-          <RotateCcw className="w-3.5 h-3.5" />
-        </button>
-      </div>
-
-      {/* Sim speed select */}
-      <div className="flex items-center justify-between bg-slate-900/40 p-2 rounded-lg border border-slate-800/80">
-        <span className="text-[10px] text-slate-400 font-bold uppercase">Sim Speed:</span>
-        <div className="flex gap-1">
-          {(['1', '2', '5', '10'] as const).map((s) => (
-            <button
-              key={s}
-              className={`px-2 py-0.5 text-[10px] font-bold rounded transition-all ${
-                config.simulationSpeed === Number(s)
-                  ? 'bg-cyan-600 text-white shadow shadow-cyan-900/30'
-                  : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700'
-              }`}
-              onClick={() => setConfig({ simulationSpeed: Number(s) })}
-            >
-              {s}x
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
+import { Users } from 'lucide-react';
 
 export default function SimulationControls() {
   const config = useSimulationStore((s) => s.config);
@@ -258,95 +175,14 @@ export default function SimulationControls() {
         )}
       </div>
 
-      {/* 4. SIMULATION RUNTIME CONTROLS */}
-      <div className="glass rounded-xl border border-slate-800 overflow-hidden shadow-lg">
+      {/* Manual Demo Export actions */}
+      <div className="flex justify-end p-2">
         <button
-          className="w-full flex items-center justify-between p-4 bg-slate-900/40 text-sm font-bold text-cyan-400 select-none hover:bg-slate-900/60 transition-all"
-          onClick={() => toggle('simulation')}
+          className="px-4 py-2 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition-all shadow"
+          onClick={() => useSimulationStore.getState().exportReport()}
         >
-          <span>⚙ SIMULATION CONTROLS & TIMELINE</span>
-          <span className="text-xs">{expanded.simulation ? '▲' : '▼'}</span>
+          Export Report
         </button>
-        {expanded.simulation && (
-          <div className="p-4 bg-slate-950/20 border-t border-slate-800 space-y-4">
-            {/* Timeline Slider */}
-            <div className="p-3 bg-slate-900/40 rounded border border-slate-800/80">
-              <div className="flex justify-between text-[11px] text-slate-400 mb-1.5">
-                <span>0h</span>
-                <span className="text-cyan-400 font-mono font-bold">Sim Timeline: {timelineHour.toFixed(1)}h</span>
-                <span>24h</span>
-              </div>
-              <input
-                type="range" min={0} max={24} step={0.1} value={timelineHour}
-                className="w-full h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer"
-                onChange={(e) => seekTimeline(Number(e.target.value))}
-              />
-            </div>
-
-            {/* Speeds & Buttons */}
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              {/* Playback Buttons */}
-              <div className="flex gap-2">
-                <button
-                  className="px-4 py-2 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 transition-all shadow"
-                  onClick={startOutbreak}
-                  title="Start Outbreak"
-                >
-                  <Play className="w-3.5 h-3.5" /> Start Outbreak
-                </button>
-                <button
-                  className="p-2 rounded bg-yellow-600 hover:bg-yellow-500 text-white transition-all"
-                  onClick={status === 'running' ? pause : resume}
-                  title={status === 'running' ? 'Pause' : 'Resume'}
-                >
-                  <Pause className="w-4 h-4" />
-                </button>
-                <button
-                  className="p-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-all"
-                  onClick={replay}
-                  title="Replay"
-                >
-                  <SkipForward className="w-4 h-4" />
-                </button>
-                <button
-                  className="p-2 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 transition-all"
-                  onClick={reset}
-                  title="Reset"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                </button>
-              </div>
-
-              {/* Sim Speeds */}
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-slate-400 font-bold uppercase">Speed:</span>
-                <div className="flex gap-1">
-                  {(['1', '2', '5', '10'] as const).map((s) => (
-                    <button
-                      key={s}
-                      className={`px-3 py-1 text-xs font-bold rounded transition-all ${
-                        config.simulationSpeed === Number(s)
-                          ? 'bg-cyan-600 text-white shadow shadow-cyan-900/30'
-                          : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700'
-                      }`}
-                      onClick={() => setConfig({ simulationSpeed: Number(s) })}
-                    >
-                      {s}x
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Actions */}
-              <button
-                className="px-4 py-2 rounded bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition-all shadow"
-                onClick={() => useSimulationStore.getState().exportReport()}
-              >
-                Export Report
-              </button>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* Patient Zero Alert Card */}
