@@ -97,9 +97,13 @@ interface SimStore {
   recommendationHistory: RecommendationHistoryEntry[];
   
   // Camera and UI focus states
-  cameraMode: 'free' | 'top' | 'ground' | 'first' | 'icu' | 'patientZero' | 'follow';
+  cameraMode: 'free' | 'top' | 'ground' | 'first' | 'icu' | 'follow';
   followedPersonId: string | null;
-  setCameraMode: (mode: 'free' | 'top' | 'ground' | 'first' | 'icu' | 'patientZero' | 'follow', personId?: string | null) => void;
+  setCameraMode: (mode: 'free' | 'top' | 'ground' | 'first' | 'icu' | 'follow', personId?: string | null) => void;
+  flashingRoomId: string | null;
+  flashRoom: (roomId: string) => void;
+  activeAlgorithmHighlight: string | null;
+  setAlgorithmHighlight: (roomId: string | null) => void;
   algorithmSteps: Record<string, number>;
   setAlgorithmStep: (algo: string, step: number) => void;
   hasFocusedIcu: boolean;
@@ -187,7 +191,7 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
   mergeSortAnimStep: 0,
 
   // Decision Support Initial States
-  lastEventLabel: 'Hospital initialized',
+  lastEventLabel: '',
   lastComparison: null,
   recommendationHistory: [],
 
@@ -195,6 +199,17 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
   cameraMode: 'free',
   followedPersonId: null,
   setCameraMode: (mode, personId = null) => set({ cameraMode: mode, followedPersonId: personId }),
+  flashingRoomId: null,
+  flashRoom: (roomId) => {
+    set({ flashingRoomId: roomId });
+    setTimeout(() => {
+      if (get().flashingRoomId === roomId) {
+        set({ flashingRoomId: null });
+      }
+    }, 1500);
+  },
+  activeAlgorithmHighlight: null,
+  setAlgorithmHighlight: (roomId) => set({ activeAlgorithmHighlight: roomId }),
   algorithmSteps: { bfs: 0, dijkstra: 0, floydWarshall: 0, heap: 0, mergeSort: 0, knapsack: 0 },
   setAlgorithmStep: (algo, step) => set((s) => ({ algorithmSteps: { ...s.algorithmSteps, [algo]: step } })),
   hasFocusedIcu: false,
@@ -540,7 +555,8 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
   },
 
   setConfig: (partial) => {
-    const eventLabel = `Disease study changed to ${partial.caseStudy?.toUpperCase() || ''}.`;
+    const paramKey = Object.keys(partial)[0] || '';
+    const eventLabel = `Simulation parameter changed (${paramKey}).`;
     set((s) => ({ config: { ...s.config, ...partial } }));
     
     const { rooms, config, people } = get();
@@ -576,8 +592,6 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
       config: { ...s.config, patientZeroId: id },
       people: s.people.map((p) => ({ ...p, isPatientZero: p.id === id })),
       logs: addLog(s.logs, s.minute, `Selected Patient Zero: ${id}`, 'warning'),
-      cameraMode: 'patientZero',
-      followedPersonId: id,
       lastEventLabel: eventLabel,
     }));
   },
@@ -604,8 +618,6 @@ export const useSimulationStore = create<SimStore>((set, get) => ({
       logs: addLog(logs, 0, `Manual demonstration started. Patient Zero ${config.patientZeroId} infected with ${disease.shortName} in ${ROOM_DEFINITIONS[origin].name}.`, 'danger'),
       timeline: addTimeline([], 0, `Outbreak started: ${config.patientZeroId} in ${ROOM_DEFINITIONS[origin].name}`),
       snapshots: [],
-      cameraMode: 'patientZero',
-      followedPersonId: config.patientZeroId,
       hasFocusedIcu: false,
     });
   },

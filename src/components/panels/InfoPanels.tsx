@@ -169,7 +169,7 @@ export function PersonInfoPanel() {
         {person.isPatientZero && (
           <div className="border border-red-500/30 rounded p-1.5 bg-red-950/20 my-1 text-[10px]">
             <div className="text-red-400 font-bold">★ Patient Zero</div>
-            <div>Disease: {config.caseStudy.toUpperCase()}</div>
+            <div>Disease: MRSA</div>
           </div>
         )}
 

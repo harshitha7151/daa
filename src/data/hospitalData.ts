@@ -17,35 +17,6 @@ export const CASE_STUDIES: Record<CaseStudyId, DiseaseParams> = {
     incubationMinutes: 45,
     spreadMultiplier: 1.0,
   },
-  cdiff: {
-    id: 'cdiff',
-    name: 'Clostridium difficile',
-    shortName: 'C. difficile',
-    cause: 'Surface contamination',
-    typicalSpread: ['general-ward', 'waiting-area', 'doctor-cabin', 'pharmacy'],
-    surfaceTransmission: 0.95,
-    patientTransmission: 0.4,
-    equipmentTransmission: 0.35,
-    airborneSpread: 0.08,
-    cleaningDependency: 0.92,
-    incubationMinutes: 60,
-    spreadMultiplier: 0.9,
-  },
-  crkp: {
-    id: 'crkp',
-    name: 'Carbapenem Resistant Klebsiella pneumoniae',
-    shortName: 'CRKP',
-    cause: 'Shared ventilators and medical equipment',
-    typicalSpread: ['icu', 'laboratory', 'ward-2'],
-    // Operation Theatre shown as visual room adjacent to ICU
-    surfaceTransmission: 0.5,
-    patientTransmission: 0.65,
-    equipmentTransmission: 0.95,
-    airborneSpread: 0.3,
-    cleaningDependency: 0.6,
-    incubationMinutes: 30,
-    spreadMultiplier: 1.2,
-  },
 };
 
 export const ROOM_DEFINITIONS: Record<RoomId, RoomDefinition> = {

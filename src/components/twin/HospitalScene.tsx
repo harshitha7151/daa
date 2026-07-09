@@ -10,78 +10,7 @@ import {
 import type { Person, RoomId } from '../../types';
 import { ROOM_IDS } from '../../types';
 
-type HighlightKind = 'bfs' | 'dijkstra' | 'heap' | 'knapsack' | 'merge' | 'floyd' | null;
 
-function useRoomHighlight(roomId: string): HighlightKind {
-  const daa = useSimulationStore((s) => s.daa);
-  if (daa.bfs.nextPredicted === roomId) return 'bfs';
-  if (daa.heap.root === roomId) return 'heap';
-  if (daa.knapsack.selected.includes(roomId as RoomId)) return 'knapsack';
-  if (daa.dijkstra.path.includes(roomId as RoomId)) return 'dijkstra';
-  if (daa.mergeSort.sorted[0]?.roomId === roomId) return 'merge';
-  
-  // Floyd-Warshall recommendation check
-  const isFloyd = daa.recommendations.find(r => r.algorithm === 'Floyd-Warshall' && r.actionParams?.roomId === roomId);
-  if (isFloyd) return 'floyd';
-  return null;
-}
-
-const HIGHLIGHT_COLORS: Record<NonNullable<HighlightKind>, string> = {
-  bfs: '#3b82f6', // Blue: Predicted Infection
-  dijkstra: '#f97316', // Orange: Transmission Path
-  heap: '#a855f7', // Purple: Highest Priority
-  knapsack: '#22c55e', // Green: Recommended Sanitization
-  merge: '#ef4444', // Red: Critical Room
-  floyd: '#64748b', // Slate: Indirect transit route
-};
-
-const BADGE_TEXTS: Record<NonNullable<HighlightKind>, string> = {
-  knapsack: 'Recommended Sanitization',
-  dijkstra: 'Transmission Path',
-  bfs: 'Predicted Next Infection',
-  heap: 'Highest Priority',
-  merge: 'Critical Room',
-  floyd: 'Indirect Transit Route',
-};
-
-interface AlgoPopupDetails {
-  purpose: string;
-  whyThisRoom: string;
-  recommendation: string;
-}
-
-const POPUP_DETAILS: Record<string, (roomName: string) => AlgoPopupDetails> = {
-  knapsack: (roomName) => ({
-    purpose: 'Selects the best rooms to sanitize within the available budget.',
-    whyThisRoom: `${roomName} currently provides the highest reduction in outbreak risk for the available cleaning budget.`,
-    recommendation: `Sanitize ${roomName} immediately.`,
-  }),
-  dijkstra: (roomName) => ({
-    purpose: 'Computes the shortest path of disease transmission between Patient Zero and the ICU.',
-    whyThisRoom: `${roomName} lies directly on the high-risk transmission path. Movement through here poses severe cross-contamination risks.`,
-    recommendation: `Restrict movement and sanitize corridors in ${roomName}.`,
-  }),
-  bfs: (roomName) => ({
-    purpose: 'Performs a breadth-first search to predict the next wave of room contamination.',
-    whyThisRoom: `Pathogen level trends and room adjacency mapping project that ${roomName} is the next room to be contaminated.`,
-    recommendation: `Isolate patients and pre-emptively clean ${roomName}.`,
-  }),
-  heap: (roomName) => ({
-    purpose: 'Maintains a Max Heap priority queue to sort rooms by risk score.',
-    whyThisRoom: `${roomName} is currently positioned at the root of the heap with the highest priority score.`,
-    recommendation: `Apply intensive clinical sanitization protocols to ${roomName} immediately.`,
-  }),
-  merge: (roomName) => ({
-    purpose: 'Sorts all hospital rooms by active contamination level to establish intervention ranking.',
-    whyThisRoom: `${roomName} ranks as the most critical risk room in the sorted list.`,
-    recommendation: `Prioritize ${roomName} in the intervention queue.`,
-  }),
-  floyd: (roomName) => ({
-    purpose: 'Calculates all-pairs shortest paths to discover indirect spread routes across wards.',
-    whyThisRoom: `${roomName} acts as a key transit bridge between separate wings, making it a super-spreader node.`,
-    recommendation: `Lock ${roomName} to force safe transit detours.`,
-  }),
-};
 
 /** Detailed Room Furniture Assets */
 function RoomAssets({ assets, w, d }: { assets: string[]; w: number; d: number }) {
@@ -401,21 +330,26 @@ function ArchitecturalRoom({
 }) {
   const activeFloor = useSimulationStore((s) => s.activeFloor);
   const selectedRoomId = useSimulationStore((s) => s.selectedRoomId);
-  const highlight = useRoomHighlight(roomId);
+  const flashingRoomId = useSimulationStore((s) => s.flashingRoomId);
+  const activeAlgorithmHighlight = useSimulationStore((s) => s.activeAlgorithmHighlight);
   const [w, h, d] = size;
   
+  const isFlashing = flashingRoomId === roomId;
+  const isAlgoHighlight = activeAlgorithmHighlight === roomId;
+
   // Custom transition from Green -> Yellow -> Orange -> Red -> Purple
   const floorColor = useMemo(() => {
+    if (isFlashing) return '#06b6d4'; // Bright flashing Cyan
+    if (isAlgoHighlight) return '#eab308'; // Glowing algorithm node search Yellow!
     if (riskLevel === 'locked') return '#7c3aed'; // Purple
     if (contamination >= 0.85) return '#8b5cf6'; // Purple
     if (contamination >= 0.6) return '#dc2626';  // Red
     if (contamination >= 0.35) return '#ea580c'; // Orange
     if (contamination >= 0.15) return '#eab308'; // Yellow
     return '#22c55e'; // Green
-  }, [contamination, riskLevel]);
+  }, [contamination, riskLevel, isFlashing, isAlgoHighlight]);
 
   const selected = selectedRoomId === roomId;
-  const hlColor = highlight ? HIGHLIGHT_COLORS[highlight] : null;
 
   if (activeFloor !== 'all' && floor !== activeFloor) return null;
 
@@ -427,7 +361,13 @@ function ArchitecturalRoom({
       {/* Floor tile */}
       <mesh receiveShadow rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
         <planeGeometry args={[w - 0.2, d - 0.2]} />
-        <meshStandardMaterial color={floorColor} transparent opacity={0.9} />
+        <meshStandardMaterial 
+          color={floorColor} 
+          transparent 
+          opacity={0.9} 
+          emissive={isFlashing ? '#06b6d4' : isAlgoHighlight ? '#eab308' : '#000000'} 
+          emissiveIntensity={isFlashing ? 1.5 : isAlgoHighlight ? 1.3 : 0} 
+        />
       </mesh>
 
       {/* Back wall */}
@@ -507,13 +447,6 @@ function ArchitecturalRoom({
         <pointLight position={[0, h * 0.8, 0]} color="#ef4444" intensity={contamination * 3} distance={w} />
       )}
 
-      {/* Algorithm highlight ring */}
-      {hlColor && (
-        <mesh position={[0, 0.08, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-          <ringGeometry args={[w * 0.45, w * 0.52, 32]} />
-          <meshBasicMaterial color={hlColor} transparent opacity={0.75} side={THREE.DoubleSide} />
-        </mesh>
-      )}
       {selected && (
         <mesh position={[0, 0.06, 0]} rotation={[-Math.PI / 2, 0, 0]}>
           <ringGeometry args={[w * 0.52, w * 0.58, 32]} />
@@ -530,17 +463,11 @@ function ArchitecturalRoom({
             onClick?.();
           }}
           className={`px-3 py-1.5 rounded-lg text-[10px] font-extrabold whitespace-nowrap cursor-pointer shadow-2xl border transition-all hover:scale-105 select-none ${
-            highlight === 'bfs' ? 'bg-blue-600 text-white border-blue-400 shadow-blue-500/20' :
-            highlight === 'heap' ? 'bg-purple-600 text-white border-purple-400 shadow-purple-500/20' :
-            highlight === 'knapsack' ? 'bg-green-600 text-white border-green-400 shadow-green-500/20' :
-            highlight === 'dijkstra' ? 'bg-orange-500 text-white border-orange-400 shadow-orange-500/20' :
-            highlight === 'merge' ? 'bg-red-600 text-white border-red-400 shadow-red-500/20 animate-pulse' :
-            highlight === 'floyd' ? 'bg-slate-700 text-white border-slate-500 shadow-slate-500/10' :
-            'bg-slate-900/90 text-slate-200 border-slate-700'
+            selected ? 'bg-cyan-950/90 text-cyan-300 border-cyan-500 shadow-cyan-950/60' : 'bg-slate-900/90 text-slate-200 border-slate-700'
           }`}
         >
-          {highlight ? BADGE_TEXTS[highlight] : name}
-          {contamination > 0.08 && <span className="ml-1.5 text-yellow-300 font-extrabold">{(contamination * 100).toFixed(0)}%</span>}
+          {name}
+          {contamination > 0.08 && <span className="ml-1.5 text-yellow-400 font-extrabold">{(contamination * 100).toFixed(0)}%</span>}
         </div>
       </Html>
     </group>
@@ -993,12 +920,6 @@ function CameraController() {
       const p = getRoomPosition('icu');
       targetPos.current.set(p[0] * scale, (p[1] + 12) * scale, (p[2] + 18) * scale);
       targetLookAt.current.set(p[0] * scale, p[1] * scale, p[2] * scale);
-    } else if (cameraMode === 'patientZero') {
-      const pz = people.find((p) => p.isPatientZero);
-      if (pz) {
-        targetPos.current.set(pz.position[0] * scale, (pz.position[1] + 8) * scale, (pz.position[2] + 12) * scale);
-        targetLookAt.current.set(pz.position[0] * scale, pz.position[1] * scale, pz.position[2] * scale);
-      }
     } else if (cameraMode === 'follow') {
       const followed = people.find((p) => p.id === followedPersonId);
       if (followed) {
@@ -1129,7 +1050,6 @@ export function CameraControlsOverlay() {
   const cameraMode = useSimulationStore((s) => s.cameraMode);
   const setCameraMode = useSimulationStore((s) => s.setCameraMode);
   const people = useSimulationStore((s) => s.people);
-  const pz = people.find((p) => p.isPatientZero);
 
   return (
     <div className="absolute top-2 left-2 z-10 flex flex-wrap gap-1 bg-slate-900/90 p-1.5 rounded-lg border border-slate-700/50 shadow-xl max-w-[260px] md:max-w-none">
@@ -1151,26 +1071,21 @@ export function CameraControlsOverlay() {
         </button>
       ))}
       <button
-        disabled={!pz}
-        className={`px-2 py-1 text-[10px] font-semibold rounded transition-all duration-150 ${
-          cameraMode === 'patientZero' ? 'bg-cyan-600 text-white shadow' : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 disabled:opacity-40'
-        }`}
-        onClick={() => pz && setCameraMode('patientZero')}
-        title={pz ? 'Focus on Patient Zero' : 'Select Patient Zero first'}
-      >
-        Patient Zero
-      </button>
-      <button
         disabled={people.length === 0}
         className={`px-2 py-1 text-[10px] font-semibold rounded transition-all duration-150 ${
           cameraMode === 'follow' ? 'bg-cyan-600 text-white shadow' : 'bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 disabled:opacity-40'
         }`}
         onClick={() => {
-          const target = pz ?? people.find((p) => p.status === 'infected') ?? people[0];
-          if (target) setCameraMode('follow', target.id);
+          if (cameraMode === 'follow') {
+            setCameraMode('free');
+          } else {
+            const selectedPersonId = useSimulationStore.getState().selectedPersonId;
+            const target = people.find((p) => p.id === selectedPersonId) ?? people[0];
+            if (target) setCameraMode('follow', target.id);
+          }
         }}
       >
-        Follow Patient
+        {cameraMode === 'follow' ? 'Unfollow Person' : 'Follow Person'}
       </button>
       <button
         className="px-2 py-1 text-[10px] font-semibold rounded bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700"

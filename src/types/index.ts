@@ -21,7 +21,7 @@ export type HealthStatus = 'healthy' | 'exposed' | 'infected' | 'recovered';
 
 export type RoomRiskLevel = 'safe' | 'low' | 'moderate' | 'high' | 'critical' | 'locked';
 
-export type CaseStudyId = 'mrsa' | 'cdiff' | 'crkp';
+export type CaseStudyId = 'mrsa';
 
 export type OutbreakStatus = 'idle' | 'running' | 'paused' | 'contained' | 'ended';
 

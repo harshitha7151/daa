@@ -32,7 +32,7 @@ export default function TopBar() {
         {hospitalName}
       </div>
       <div className="h-4 w-px bg-slate-600" />
-      <span className="text-slate-300">Case: <strong className="text-white">{disease.shortName}</strong></span>
+      <span className="text-slate-300">Case: <strong className="text-white">MRSA</strong></span>
       <span className="flex items-center gap-1 text-slate-300">
         <Clock className="w-3.5 h-3.5" /> {formatSimTime(minute)}
       </span>

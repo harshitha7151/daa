@@ -9,6 +9,7 @@ interface Props {
   reason: string;
   recommendation: string;
   expectedOutcome: string;
+  visualization?: React.ReactNode;
   children: React.ReactNode;
 }
 
@@ -20,6 +21,7 @@ export default function AlgorithmCard({
   reason,
   recommendation,
   expectedOutcome,
+  visualization,
   children,
 }: Props) {
   const [showTech, setShowTech] = useState(false);
@@ -32,22 +34,29 @@ export default function AlgorithmCard({
       layout
     >
       {/* Header */}
-      <div className="flex justify-between items-center border-b border-slate-805 pb-1.5">
+      <div className="flex justify-between items-center border-b border-slate-850 pb-1.5">
         <span className="font-extrabold text-[10px] text-cyan-400 uppercase tracking-widest font-mono">Algorithm: {algorithm}</span>
         <span className="text-[9px] px-1.5 py-0.5 rounded bg-cyan-950/20 text-cyan-400 border border-cyan-850">Clinical Analysis</span>
       </div>
 
       {/* Main Details */}
-      <div className="space-y-2">
+      <div className="space-y-2.5">
         <div>
           <span className="text-[8px] text-slate-500 font-bold block uppercase tracking-wider">Purpose</span>
-          <span className="text-slate-200 font-medium">{purpose}</span>
+          <span className="text-slate-250 font-medium">{purpose}</span>
         </div>
 
         <div>
           <span className="text-[8px] text-slate-500 font-bold block uppercase tracking-wider">Question</span>
           <span className="text-slate-300 font-bold italic">{question}</span>
         </div>
+
+        {/* 10-Second Visualizer slot */}
+        {visualization && (
+          <div className="my-2 select-none">
+            {visualization}
+          </div>
+        )}
 
         <div>
           <span className="text-[8px] text-slate-500 font-bold block uppercase tracking-wider">Answer</span>

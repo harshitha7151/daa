@@ -53,16 +53,10 @@ function DemoControllerPanel() {
       {status === 'idle' ? (
         <div className="space-y-2.5">
           <label className="text-[10px] text-slate-400 font-bold block">
-            1. Select Pathogen
-            <select
-              className="block w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white"
-              value={config.caseStudy}
-              onChange={(e) => setConfig({ caseStudy: e.target.value as any })}
-            >
-              <option value="mrsa">MRSA (Staph)</option>
-              <option value="cdiff">C. difficile (Spore)</option>
-              <option value="crkp">CRKP (Superbug)</option>
-            </select>
+            Selected Pathogen
+            <div className="block w-full mt-1 bg-slate-900 border border-slate-700/80 rounded px-2.5 py-1.5 text-xs text-white font-bold">
+              MRSA (Methicillin-resistant Staphylococcus aureus)
+            </div>
           </label>
 
           <label className="text-[10px] text-slate-400 font-bold block">
@@ -90,7 +84,7 @@ function DemoControllerPanel() {
       ) : (
         <div className="space-y-2.5">
           <div className="text-[10px] bg-red-950/20 border border-red-500/20 rounded p-2 text-slate-350 space-y-1 font-semibold">
-            <div><span className="text-red-400 font-bold">Pathogen:</span> {config.caseStudy.toUpperCase()}</div>
+            <div><span className="text-red-400 font-bold">Pathogen:</span> MRSA</div>
             <div><span className="text-slate-400 font-medium">Patient Zero:</span> {pz?.id ?? 'N/A'} ({pz ? ROOM_DEFINITIONS[pz.roomId].name : ''})</div>
           </div>
 

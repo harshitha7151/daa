@@ -81,7 +81,7 @@ export function OutbreakDashboard() {
 
   return (
     <div className="px-2 py-1 text-[10px] grid grid-cols-4 gap-2 bg-slate-900/50">
-      <div><span className="text-slate-500">Disease:</span> {config.caseStudy.toUpperCase()}</div>
+      <div><span className="text-slate-500">Disease:</span> MRSA</div>
       <div><span className="text-slate-500">Patient Zero:</span> {pz?.id ?? '—'}</div>
       <div><span className="text-slate-500">Highest Risk:</span> {daa.heap.root ? ROOM_DEFINITIONS[daa.heap.root].name : '—'}</div>
       <div><span className="text-slate-500">Algorithm:</span> {daa.currentAlgorithm}</div>
